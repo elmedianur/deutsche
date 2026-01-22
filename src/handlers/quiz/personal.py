@@ -1,8 +1,10 @@
 """
 Personal Quiz Handler - Telegram Native Poll/Quiz with Auto-advance
 TO'G'RILANGAN VERSIYA - day_keyboard chaqiruvida level_id qo'shildi
+YANGILANGAN: Thread-safe session management, memory leak tuzatildi
 """
 import asyncio
+import threading
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -14,9 +16,11 @@ from aiogram.fsm.state import State, StatesGroup
 
 from src.database import get_session
 from src.database.models import User, Question
+from src.database.models.flashcard import Flashcard, UserFlashcard
 from src.services import quiz_service
 from src.repositories import QuestionRepository, ProgressRepository, StreakRepository, UserRepository
 from src.repositories.spaced_rep_repo import SpacedRepetitionRepository
+from src.handlers.quiz.simple import update_flashcard_from_quiz
 from src.keyboards.inline import (
     language_keyboard,
     level_keyboard,
@@ -33,47 +37,189 @@ from src.config import settings
 logger = get_logger(__name__)
 router = Router(name="personal_quiz")
 
-# Poll sessions storage
-_poll_sessions: Dict[str, Dict[str, Any]] = {}
-# Active timers
-_active_timers: Dict[int, asyncio.Task] = {}
+
+# ============================================================
+# THREAD-SAFE SESSION MANAGER - Memory leak va race condition tuzatildi
+# ============================================================
+
+class SessionManager:
+    """
+    Thread-safe session manager with TTL and max size limits.
+    Memory leak va race condition muammolarini hal qiladi.
+    """
+
+    def __init__(self, max_size: int = 10000, default_ttl: int = 1800):
+        self._sessions: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
+        self._max_size = max_size
+        self._default_ttl = default_ttl  # 30 daqiqa default
+
+    def set(self, key: str, value: Dict[str, Any], ttl: Optional[int] = None) -> bool:
+        """Session qo'shish - thread-safe"""
+        with self._lock:
+            # Max size tekshirish - eng eski sessionlarni o'chirish
+            if len(self._sessions) >= self._max_size:
+                self._evict_oldest(count=self._max_size // 10)  # 10% o'chirish
+
+            value["_created_at"] = datetime.utcnow()
+            value["_ttl"] = ttl or self._default_ttl
+            self._sessions[key] = value
+            return True
+
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        """Session olish - TTL tekshirish bilan"""
+        with self._lock:
+            if key not in self._sessions:
+                return None
+
+            session = self._sessions[key]
+            created_at = session.get("_created_at", datetime.utcnow())
+            ttl = session.get("_ttl", self._default_ttl)
+
+            # TTL tekshirish
+            if (datetime.utcnow() - created_at).total_seconds() > ttl:
+                del self._sessions[key]
+                return None
+
+            return session
+
+    def delete(self, key: str) -> bool:
+        """Session o'chirish"""
+        with self._lock:
+            if key in self._sessions:
+                del self._sessions[key]
+                return True
+            return False
+
+    def pop(self, key: str) -> Optional[Dict[str, Any]]:
+        """Session olish va o'chirish"""
+        with self._lock:
+            return self._sessions.pop(key, None)
+
+    def cleanup_expired(self) -> int:
+        """Muddati o'tgan sessionlarni tozalash"""
+        with self._lock:
+            now = datetime.utcnow()
+            expired_keys = []
+
+            for key, session in self._sessions.items():
+                created_at = session.get("_created_at", now)
+                ttl = session.get("_ttl", self._default_ttl)
+
+                if (now - created_at).total_seconds() > ttl:
+                    expired_keys.append(key)
+
+            for key in expired_keys:
+                del self._sessions[key]
+
+            return len(expired_keys)
+
+    def _evict_oldest(self, count: int = 100):
+        """Eng eski sessionlarni o'chirish (max size uchun)"""
+        if not self._sessions:
+            return
+
+        # created_at bo'yicha saralash
+        sorted_keys = sorted(
+            self._sessions.keys(),
+            key=lambda k: self._sessions[k].get("_created_at", datetime.min)
+        )
+
+        # Eng eskilarini o'chirish
+        for key in sorted_keys[:count]:
+            del self._sessions[key]
+
+        logger.warning(f"Session eviction: {count} sessions removed due to max size limit")
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._sessions)
+
+    def __contains__(self, key: str) -> bool:
+        return self.get(key) is not None
+
+
+class TimerManager:
+    """Thread-safe timer manager"""
+
+    def __init__(self, max_timers: int = 5000):
+        self._timers: Dict[int, asyncio.Task] = {}
+        self._lock = threading.RLock()
+        self._max_timers = max_timers
+
+    def set(self, user_id: int, task: asyncio.Task) -> None:
+        """Timer qo'shish - avvalgisini bekor qilish bilan"""
+        with self._lock:
+            # Avvalgi timerni bekor qilish
+            if user_id in self._timers:
+                old_task = self._timers[user_id]
+                if not old_task.done() and not old_task.cancelled():
+                    old_task.cancel()
+
+            self._timers[user_id] = task
+
+            # Max limit tekshirish
+            if len(self._timers) > self._max_timers:
+                self._cleanup_done_timers()
+
+    def cancel(self, user_id: int) -> bool:
+        """Timerni bekor qilish"""
+        with self._lock:
+            if user_id in self._timers:
+                task = self._timers[user_id]
+                if not task.done() and not task.cancelled():
+                    task.cancel()
+                del self._timers[user_id]
+                return True
+            return False
+
+    def get(self, user_id: int) -> Optional[asyncio.Task]:
+        """Timer olish"""
+        with self._lock:
+            return self._timers.get(user_id)
+
+    def _cleanup_done_timers(self) -> int:
+        """Tugagan timerlarni tozalash"""
+        done_keys = [
+            uid for uid, task in self._timers.items()
+            if task.done() or task.cancelled()
+        ]
+        for key in done_keys:
+            del self._timers[key]
+        return len(done_keys)
+
+    def cleanup(self) -> int:
+        """Manual cleanup"""
+        with self._lock:
+            return self._cleanup_done_timers()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._timers)
+
+    def __contains__(self, user_id: int) -> bool:
+        with self._lock:
+            return user_id in self._timers
+
+
+# Global manager instances - thread-safe
+_poll_sessions = SessionManager(max_size=10000, default_ttl=settings.QUIZ_MAX_SESSION_AGE)
+_active_timers = TimerManager(max_timers=5000)
 
 # Settings dan olinadi (magic numbers emas)
 QUESTION_TIME = settings.QUIZ_QUESTION_TIME
 SESSION_CLEANUP_INTERVAL = settings.QUIZ_SESSION_CLEANUP_INTERVAL
 MAX_SESSION_AGE = settings.QUIZ_MAX_SESSION_AGE
 
+
 def cleanup_old_sessions():
     """Eski sessionlarni va timerlarni tozalash - memory leak oldini olish"""
-    from datetime import datetime
-    now = datetime.utcnow()
+    expired_sessions = _poll_sessions.cleanup_expired()
+    done_timers = _active_timers.cleanup()
 
-    # 1. Poll sessions tozalash
-    old_sessions = [
-        pid for pid, data in list(_poll_sessions.items())
-        if (now - data.get("created_at", now)).total_seconds() > MAX_SESSION_AGE
-    ]
-    for pid in old_sessions:
-        try:
-            del _poll_sessions[pid]
-        except KeyError:
-            pass
+    if expired_sessions or done_timers:
+        logger.info(f"Cleanup: {expired_sessions} sessions, {done_timers} timers removed")
 
-    # 2. Tugagan timerlarni tozalash
-    done_timers = [
-        uid for uid, task in list(_active_timers.items())
-        if task.done() or task.cancelled()
-    ]
-    for uid in done_timers:
-        try:
-            del _active_timers[uid]
-        except KeyError:
-            pass
-
-    if old_sessions or done_timers:
-        logger.info(f"Cleanup: {len(old_sessions)} sessions, {len(done_timers)} timers removed")
-
-    # 3. Statistika
     logger.debug(f"Active: {len(_poll_sessions)} sessions, {len(_active_timers)} timers")
 
 
@@ -105,11 +251,9 @@ async def quiz_start(callback: CallbackQuery, state: FSMContext):
     """Start quiz selection - directly show levels (skip language selection)"""
     await state.clear()
 
-    # Cancel any active timer
+    # Cancel any active timer (thread-safe)
     user_id = callback.from_user.id
-    if user_id in _active_timers:
-        _active_timers[user_id].cancel()
-        del _active_timers[user_id]
+    _active_timers.cancel(user_id)
 
     # Get all levels directly (skip language selection)
     levels = await quiz_service.get_levels()
@@ -309,26 +453,26 @@ async def send_question(chat_id: int, user_id: int, state: FSMContext, bot: Bot)
         open_period=QUESTION_TIME
     )
     
-    # Store poll -> state mapping
-    _poll_sessions[poll_message.poll.id] = {
+    # Store poll -> state mapping (thread-safe)
+    _poll_sessions.set(poll_message.poll.id, {
         "chat_id": chat_id,
         "user_id": user_id,
         "question_index": current_index,
         "question_id": question["id"],
+        "question_text": question["text"],  # Flashcard uchun
         "correct_index": question["correct_index"],
-        "created_at": datetime.utcnow()
-    }
+    }, ttl=MAX_SESSION_AGE)
     
     await state.update_data(current_poll_id=poll_message.poll.id)
     
-    # Cancel previous timer if exists
-    if user_id in _active_timers:
-        _active_timers[user_id].cancel()
-    
+    # Cancel previous timer if exists and start new one (thread-safe)
+    _active_timers.cancel(user_id)
+
     # Start auto-advance timer
-    _active_timers[user_id] = asyncio.create_task(
+    new_timer = asyncio.create_task(
         auto_advance_timer(chat_id, user_id, current_index, state, bot)
     )
+    _active_timers.set(user_id, new_timer)
 
 
 async def auto_advance_timer(chat_id: int, user_id: int, question_index: int, state: FSMContext, bot: Bot):
@@ -453,6 +597,7 @@ async def handle_poll_answer(poll_answer: PollAnswer, bot: Bot, state: FSMContex
     poll_id = poll_answer.poll_id
     user_id = poll_answer.user.id
 
+    # Thread-safe session olish
     poll_data = _poll_sessions.get(poll_id)
 
     # Agar personal quiz poll bo'lmasa, duel poll tekshir
@@ -472,10 +617,8 @@ async def handle_poll_answer(poll_answer: PollAnswer, bot: Bot, state: FSMContex
     correct_index = poll_data["correct_index"]
     question_index = poll_data["question_index"]
     
-    # Cancel the auto-advance timer
-    if user_id in _active_timers:
-        _active_timers[user_id].cancel()
-        del _active_timers[user_id]
+    # Cancel the auto-advance timer (thread-safe)
+    _active_timers.cancel(user_id)
     
     # Check if already processed
     data = await state.get_data()
@@ -524,6 +667,20 @@ async def handle_poll_answer(poll_answer: PollAnswer, bot: Bot, state: FSMContex
         except Exception as e:
             logger.debug(f"SM-2 record error: {e}")
 
+    # Flashcard: Update UserFlashcard if word exists
+    question_text = poll_data.get("question_text")
+    if question_text:
+        try:
+            async with get_session() as session:
+                await update_flashcard_from_quiz(
+                    session=session,
+                    user_id=user_id,
+                    question_text=question_text,
+                    is_correct=is_correct
+                )
+        except Exception as e:
+            logger.debug(f"Flashcard update error: {e}")
+
     logger.info(f"handle_poll_answer: user={user_id}, correct={is_correct}, index={current_index}")
     
     await state.update_data(
@@ -534,9 +691,8 @@ async def handle_poll_answer(poll_answer: PollAnswer, bot: Bot, state: FSMContex
         answered_current=True
     )
     
-    # Clean up poll session
-    if poll_id in _poll_sessions:
-        del _poll_sessions[poll_id]
+    # Clean up poll session (thread-safe)
+    _poll_sessions.delete(poll_id)
     
     # Small delay for user to see result
     await asyncio.sleep(1.5)
@@ -579,9 +735,9 @@ async def save_quiz_to_db(user_id, correct, wrong, total, percentage, time_taken
 async def finish_quiz(chat_id: int, user_id: int, state: FSMContext, bot: Bot, timer_data: dict = None):
     """Finish quiz and show results"""
     logger.info(f"finish_quiz called: user={user_id}, chat={chat_id}")
-    if user_id in _active_timers:
-        _active_timers[user_id].cancel()
-        del _active_timers[user_id]
+
+    # Cancel active timer (thread-safe)
+    _active_timers.cancel(user_id)
     
     # Timer dan data kelgan bo'lsa ishlatamiz
     if timer_data:
@@ -676,11 +832,9 @@ async def restart_quiz(callback: CallbackQuery, state: FSMContext):
 async def cancel_quiz(callback: CallbackQuery, state: FSMContext):
     """Cancel quiz"""
     user_id = callback.from_user.id
-    
-    # Cancel timer
-    if user_id in _active_timers:
-        _active_timers[user_id].cancel()
-        del _active_timers[user_id]
+
+    # Cancel timer (thread-safe)
+    _active_timers.cancel(user_id)
     
     await state.clear()
     await callback.message.edit_text(

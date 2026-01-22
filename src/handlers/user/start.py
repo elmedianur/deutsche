@@ -144,8 +144,9 @@ async def start_command(message: Message, db_user: User, **kwargs):
                 if level["id"] == db_user.current_level_id:
                     level_name = level["name"]
                     break
-        except:
-            pass
+        except Exception as e:
+            # Level topilmasa kritik emas, faqat debug log
+            logger.debug(f"Level lookup failed for user {db_user.user_id}: {e}")
 
     # Progress bar
     word_progress = db_user.daily_word_progress

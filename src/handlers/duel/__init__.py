@@ -1,8 +1,10 @@
 """
 Duel Handler - Foydalanuvchilar o'rtasida bellashuv
+YANGILANGAN: Thread-safe session management, memory leak tuzatildi
 """
 import random
 import asyncio
+import threading
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
@@ -21,54 +23,203 @@ from src.core.logging import get_logger
 logger = get_logger(__name__)
 router = Router(name="duel")
 
-# Active duels storage
-_active_duels: Dict[str, Dict[str, Any]] = {}
-_waiting_players: Dict[int, Dict[str, Any]] = {}  # user_id -> duel info
 
-# Duel timeout settings
+# ============================================================
+# THREAD-SAFE DUEL MANAGER - Memory leak va race condition tuzatildi
+# ============================================================
+
+class DuelManager:
+    """Thread-safe duel session manager with TTL"""
+
+    def __init__(self, max_duels: int = 1000, max_waiting: int = 500):
+        self._duels: Dict[str, Dict[str, Any]] = {}
+        self._waiting: Dict[int, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
+        self._max_duels = max_duels
+        self._max_waiting = max_waiting
+        self._duel_ttl = 600  # 10 daqiqa
+        self._waiting_ttl = 120  # 2 daqiqa
+
+    # ===== DUEL METHODS =====
+
+    def create_duel(self, duel_id: str, data: Dict[str, Any]) -> bool:
+        """Yangi duel yaratish"""
+        with self._lock:
+            if len(self._duels) >= self._max_duels:
+                self._cleanup_expired_duels()
+
+            data["_created_at"] = datetime.utcnow()
+            self._duels[duel_id] = data
+            return True
+
+    def get_duel(self, duel_id: str) -> Optional[Dict[str, Any]]:
+        """Duel olish - TTL tekshirish bilan"""
+        with self._lock:
+            if duel_id not in self._duels:
+                return None
+
+            duel = self._duels[duel_id]
+            created_at = duel.get("_created_at", datetime.utcnow())
+
+            if (datetime.utcnow() - created_at).total_seconds() > self._duel_ttl:
+                del self._duels[duel_id]
+                return None
+
+            return duel
+
+    def update_duel(self, duel_id: str, updates: Dict[str, Any]) -> bool:
+        """Duel yangilash"""
+        with self._lock:
+            if duel_id not in self._duels:
+                return False
+            self._duels[duel_id].update(updates)
+            return True
+
+    def delete_duel(self, duel_id: str) -> bool:
+        """Duel o'chirish"""
+        with self._lock:
+            if duel_id in self._duels:
+                del self._duels[duel_id]
+                return True
+            return False
+
+    def iter_duels(self) -> List[tuple]:
+        """Barcha duellarni iterate qilish (thread-safe copy)"""
+        with self._lock:
+            return list(self._duels.items())
+
+    # ===== WAITING METHODS =====
+
+    def add_waiting(self, user_id: int, data: Dict[str, Any]) -> bool:
+        """Kutayotgan o'yinchi qo'shish"""
+        with self._lock:
+            if len(self._waiting) >= self._max_waiting:
+                self._cleanup_expired_waiting()
+
+            data["_started_at"] = datetime.utcnow()
+            self._waiting[user_id] = data
+            return True
+
+    def get_waiting(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Kutayotgan o'yinchi olish"""
+        with self._lock:
+            if user_id not in self._waiting:
+                return None
+
+            data = self._waiting[user_id]
+            started_at = data.get("_started_at", datetime.utcnow())
+
+            if (datetime.utcnow() - started_at).total_seconds() > self._waiting_ttl:
+                del self._waiting[user_id]
+                return None
+
+            return data
+
+    def pop_waiting(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Kutayotgan o'yinchini olish va o'chirish"""
+        with self._lock:
+            return self._waiting.pop(user_id, None)
+
+    def remove_waiting(self, user_id: int) -> bool:
+        """Kutayotgan o'yinchini o'chirish"""
+        with self._lock:
+            if user_id in self._waiting:
+                del self._waiting[user_id]
+                return True
+            return False
+
+    def get_available_opponents(self, exclude_user_id: int) -> List[int]:
+        """Mavjud raqiblarni olish"""
+        with self._lock:
+            now = datetime.utcnow()
+            available = []
+
+            for uid, data in list(self._waiting.items()):
+                if uid == exclude_user_id:
+                    continue
+
+                started_at = data.get("_started_at", now)
+                if (now - started_at).total_seconds() < self._waiting_ttl:
+                    available.append(uid)
+
+            return available
+
+    def is_waiting(self, user_id: int) -> bool:
+        """O'yinchi kutayaptimi"""
+        return self.get_waiting(user_id) is not None
+
+    # ===== CLEANUP METHODS =====
+
+    def _cleanup_expired_duels(self) -> int:
+        """Muddati o'tgan duellarni tozalash"""
+        now = datetime.utcnow()
+        expired = [
+            did for did, data in self._duels.items()
+            if (now - data.get("_created_at", now)).total_seconds() > self._duel_ttl
+        ]
+        for did in expired:
+            del self._duels[did]
+        return len(expired)
+
+    def _cleanup_expired_waiting(self) -> int:
+        """Muddati o'tgan kutayotganlarni tozalash"""
+        now = datetime.utcnow()
+        expired = [
+            uid for uid, data in self._waiting.items()
+            if (now - data.get("_started_at", now)).total_seconds() > self._waiting_ttl
+        ]
+        for uid in expired:
+            del self._waiting[uid]
+        return len(expired)
+
+    def cleanup_all(self) -> Dict[str, int]:
+        """Barcha muddati o'tganlarni tozalash"""
+        with self._lock:
+            duels_cleaned = self._cleanup_expired_duels()
+            waiting_cleaned = self._cleanup_expired_waiting()
+            return {"duels": duels_cleaned, "waiting": waiting_cleaned}
+
+    # ===== STATS =====
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._duels)
+
+    @property
+    def stats(self) -> Dict[str, int]:
+        with self._lock:
+            return {
+                "active_duels": len(self._duels),
+                "waiting_players": len(self._waiting)
+            }
+
+
+# Global thread-safe manager
+_duel_manager = DuelManager(max_duels=1000, max_waiting=500)
+
+# Legacy compatibility - direct dict access uchun
+_active_duels = _duel_manager._duels  # Faqat o'qish uchun, to'g'ridan-to'g'ri yozish tavsiya etilmaydi
+_waiting_players = _duel_manager._waiting
+
+# Duel timeout settings (config uchun)
 DUEL_MAX_AGE = 600  # 10 daqiqa maksimal duel vaqti
 WAITING_MAX_AGE = 120  # 2 daqiqa kutish vaqti
 
 
 def cleanup_old_duels():
     """Eski duellar va waiting players tozalash - memory leak oldini olish"""
-    from datetime import datetime
-    now = datetime.utcnow()
+    result = _duel_manager.cleanup_all()
 
-    # 1. Eski waiting players tozalash
-    old_waiting = [
-        uid for uid, data in list(_waiting_players.items())
-        if (now - data.get("started_at", now)).total_seconds() > WAITING_MAX_AGE
-    ]
-    for uid in old_waiting:
-        try:
-            del _waiting_players[uid]
-        except KeyError:
-            pass
+    if result["duels"] or result["waiting"]:
+        logger.info(f"Duel cleanup: {result['waiting']} waiting, {result['duels']} duels removed")
 
-    # 2. Eski duellar tozalash (timeout bo'lgan)
-    old_duels = [
-        did for did, data in list(_active_duels.items())
-        if (now - data.get("started_at", now)).total_seconds() > DUEL_MAX_AGE
-    ]
-    for did in old_duels:
-        try:
-            del _active_duels[did]
-        except KeyError:
-            pass
-
-    if old_waiting or old_duels:
-        logger.info(f"Duel cleanup: {len(old_waiting)} waiting, {len(old_duels)} duels removed")
-
-    logger.debug(f"Active: {len(_active_duels)} duels, {len(_waiting_players)} waiting")
+    stats = _duel_manager.stats
+    logger.debug(f"Active: {stats['active_duels']} duels, {stats['waiting_players']} waiting")
 
 
 def get_duel_stats() -> dict:
     """Duel statistikasi - monitoring uchun"""
-    return {
-        "active_duels": len(_active_duels),
-        "waiting_players": len(_waiting_players)
-    }
+    return _duel_manager.stats
 
 
 class DuelStates(StatesGroup):
@@ -250,16 +401,16 @@ async def find_random_opponent(callback: CallbackQuery, state: FSMContext, bot: 
         )
     try:
         await callback.answer()
-    except Exception:
-        pass
+    except Exception as e:
+        # callback.answer() ba'zan "query is too old" xatosi beradi - bu normal
+        logger.debug(f"Callback answer failed (non-critical): {e}")
 
 
 async def start_duel_round(duel_id: str, bot: Bot, state: FSMContext = None):
     """Start a duel round"""
-    if duel_id not in _active_duels:
+    duel = _duel_manager.get_duel(duel_id)
+    if not duel:
         return
-    
-    duel = _active_duels[duel_id]
     questions = duel["questions"]
     current_index = duel["current_index"]
     

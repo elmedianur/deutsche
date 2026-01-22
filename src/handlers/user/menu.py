@@ -376,8 +376,9 @@ async def settings_learning(callback: CallbackQuery, db_user: User):
                     current_level_name = level["name"]
                     break
             current_day_text = f"\n📅 Joriy kun: <b>{db_user.current_day_number}-kun</b>"
-        except:
-            pass
+        except Exception as e:
+            # Level topilmasa kritik emas, default qiymatlar ishlatiladi
+            logger.debug(f"Level lookup failed: {e}")
 
     # Progress bar yasash
     word_progress = db_user.daily_word_progress
@@ -386,11 +387,16 @@ async def settings_learning(callback: CallbackQuery, db_user: User):
     quiz_progress = db_user.daily_quiz_progress
     quiz_bar = _create_progress_bar(quiz_progress)
 
+    # Algoritm nomi
+    algorithm = db_user.sr_algorithm or "sm2"
+    algorithm_name = "SM-2" if algorithm == "sm2" else "Anki"
+
     text = f"""
 📚 <b>O'rganish sozlamalari</b>
 
 <b>Joriy holat:</b>
 📊 Daraja: <b>{current_level_name}</b>{current_day_text}
+🧠 Algoritm: <b>{algorithm_name}</b>
 
 <b>Kunlik maqsadlar:</b>
 📝 So'zlar: {db_user.words_learned_today}/{db_user.daily_word_goal}
@@ -411,6 +417,12 @@ Sozlashni tanlang 👇
         InlineKeyboardButton(
             text=f"📊 Daraja: {current_level_name}",
             callback_data="settings:change_level"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=f"🧠 Algoritm: {algorithm_name}",
+            callback_data="settings:algorithm"
         )
     )
     builder.row(
@@ -442,6 +454,123 @@ def _create_progress_bar(percentage: float, length: int = 10) -> str:
     filled = int(percentage / 100 * length)
     empty = length - filled
     return "█" * filled + "░" * empty
+
+
+# =====================================================
+# SPACED REPETITION ALGORITHM SETTINGS
+# =====================================================
+
+@router.callback_query(F.data == "settings:algorithm")
+async def settings_algorithm(callback: CallbackQuery, db_user: User):
+    """Takrorlash algoritmi sozlamalari"""
+    current_algo = db_user.sr_algorithm or "sm2"
+
+    text = """
+🧠 <b>Takrorlash algoritmi</b>
+
+So'zlarni takrorlash uchun algoritmni tanlang:
+
+<b>SM-2 (SuperMemo 2)</b>
+├ Klassik spaced repetition
+├ Intervallar: 1 → 6 → 15 → 38 → 95 kun
+├ Barqaror interval o'sishi
+└ Anki dan sekinroq
+
+<b>Anki</b>
+├ Modified SM-2 algoritmi
+├ Intervallar: 1 → 3 → 8 → 20 → 50 kun
+├ Easy/Hard tugmalari ta'siri kuchli
+└ Tezroq o'rganish
+
+⚠️ <i>Algoritm o'zgartirilsa, yangi so'zlar uchun amal qiladi.
+Mavjud so'zlar oldingi algoritm bo'yicha davom etadi.</i>
+"""
+
+    builder = InlineKeyboardBuilder()
+
+    sm2_check = " ✓" if current_algo == "sm2" else ""
+    anki_check = " ✓" if current_algo == "anki" else ""
+
+    builder.row(
+        InlineKeyboardButton(
+            text=f"📊 SM-2 (Klassik){sm2_check}",
+            callback_data="settings:set_algo:sm2"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=f"🃏 Anki (Tez){anki_check}",
+            callback_data="settings:set_algo:anki"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="📖 Taqqoslash", callback_data="settings:algo_compare")
+    )
+    builder.row(
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data="settings:learning")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("settings:set_algo:"))
+async def settings_set_algorithm(callback: CallbackQuery, db_user: User):
+    """Algoritmni o'rnatish"""
+    algo = callback.data.split(":")[-1]
+
+    async with get_session() as session:
+        from src.repositories import UserRepository
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(db_user.user_id)
+        if user:
+            user.sr_algorithm = algo
+            await user_repo.save(user)
+
+    algo_name = "SM-2" if algo == "sm2" else "Anki"
+    await callback.answer(f"✅ Algoritm o'zgartirildi: {algo_name}", show_alert=True)
+    await settings_algorithm(callback, db_user)
+
+
+@router.callback_query(F.data == "settings:algo_compare")
+async def settings_algo_compare(callback: CallbackQuery, db_user: User):
+    """Algoritmlarni taqqoslash"""
+    text = """
+📊 <b>SM-2 vs Anki taqqoslash</b>
+
+┌─────────────┬──────────────────┬──────────────────┐
+│ Takrorlash  │      SM-2        │      Anki        │
+├─────────────┼──────────────────┼──────────────────┤
+│ 1           │ 1 kun            │ 1 kun            │
+│ 2           │ 6 kun            │ ~3 kun           │
+│ 3           │ ~15 kun          │ ~8 kun           │
+│ 4           │ ~38 kun          │ ~20 kun          │
+│ 5           │ ~95 kun          │ ~50 kun          │
+│ 6           │ ~238 kun         │ ~125 kun         │
+│ Arxiv       │ 180+ kun         │ 180+ kun         │
+└─────────────┴──────────────────┴──────────────────┘
+
+<b>SM-2 uchun:</b>
+✅ Sekinroq, lekin puxta o'rganish
+✅ Barqaror interval o'sishi
+✅ Klassik, sinovdan o'tgan
+
+<b>Anki uchun:</b>
+✅ Tezroq natija
+✅ Easy/Hard tugmalari ta'siri kuchli
+✅ Ko'proq moslashuvchan
+
+💡 <i>Agar birinchi marta o'rgansangiz - SM-2
+Agar tez takrorlash kerak bo'lsa - Anki</i>
+"""
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data="settings:algorithm")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
 
 
 @router.callback_query(F.data == "settings:change_level")
