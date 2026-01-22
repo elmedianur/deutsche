@@ -211,27 +211,28 @@ def day_keyboard(
 def question_count_keyboard(
     max_questions: int = 100,
     day_id: Optional[int] = None,
-    level_id: Optional[int] = None
+    level_id: Optional[int] = None,
+    back_callback: str = "quiz:start"
 ) -> InlineKeyboardMarkup:
     """Question count selection keyboard"""
     builder = InlineKeyboardBuilder()
-    
+
     # Standard counts
     counts = [5, 10, 15, 20, 50, 100]
-    
+
     for count in counts:
         if count <= max_questions:
             builder.button(
                 text=f"📝 {count} ta",
                 callback_data=f"quiz:count:{count}"
             )
-    
+
     builder.adjust(2)  # 2 buttons per row
-    
+
     builder.row(
-        InlineKeyboardButton(text="◀️ Orqaga", callback_data="quiz:start")
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data=back_callback)
     )
-    
+
     return builder.as_markup()
 
 
@@ -447,27 +448,26 @@ def flashcard_answer_keyboard(card_id: int) -> InlineKeyboardMarkup:
 def settings_keyboard(settings_data: Dict[str, Any]) -> InlineKeyboardMarkup:
     """Settings menu keyboard"""
     builder = InlineKeyboardBuilder()
-    
+
     notif_status = "✅" if settings_data.get("notifications", True) else "❌"
     reminder_status = "✅" if settings_data.get("daily_reminder", True) else "❌"
-    
+
+    # O'rganish sozlamalari - eng muhimi
+    builder.row(
+        InlineKeyboardButton(text="📚 O'rganish sozlamalari", callback_data="settings:learning")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📝 Quiz sozlamalari", callback_data="quiz:settings")
+    )
     builder.row(
         InlineKeyboardButton(
             text=f"{notif_status} Bildirishnomalar",
             callback_data="settings:toggle:notifications"
-        )
-    )
-    builder.row(
+        ),
         InlineKeyboardButton(
-            text=f"{reminder_status} Kunlik eslatma",
+            text=f"{reminder_status} Eslatmalar",
             callback_data="settings:toggle:daily_reminder"
         )
-    )
-    builder.row(
-        InlineKeyboardButton(text="📚 O'rganish yo'li", callback_data="settings:learning_path")
-    )
-    builder.row(
-        InlineKeyboardButton(text="📝 Quiz sozlamalari", callback_data="quiz:settings")
     )
     builder.row(
         InlineKeyboardButton(text="🌐 Til", callback_data="settings:language")

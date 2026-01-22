@@ -89,10 +89,12 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     from src.handlers.flashcard import router as flashcard_router
     from src.handlers.tournament import router as tournament_router
     from src.handlers.shop import router as shop_router
-    
+    from src.handlers.learning import router as learning_router
+
     # Include routers
     dp.include_router(start_router)
     dp.include_router(menu_router)
+    dp.include_router(learning_router)  # So'z o'rganish
     dp.include_router(quiz_router)
     dp.include_router(payment_router)
     dp.include_router(admin_router)
@@ -100,7 +102,7 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     dp.include_router(flashcard_router)
     dp.include_router(tournament_router)
     dp.include_router(shop_router)
-    
+
     logger.info("Handlers registered")
 
 

@@ -138,3 +138,67 @@ class User(Base, TimestampMixin):
     quiz_difficulty: Mapped[str] = mapped_column(String(20), default="mixed")  # easy, medium, hard, mixed
     quizzes_today: Mapped[int] = mapped_column(default=0)  # bugungi o'yinlar soni
     quiz_last_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)  # oxirgi o'ynagan sana
+
+    # =====================================================
+    # O'RGANISH SOZLAMALARI (Learning Settings)
+    # =====================================================
+
+    # Onboarding
+    onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Joriy o'rganish holati (Quick Start uchun)
+    current_language_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    current_level_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    current_day_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    current_day_number: Mapped[int] = mapped_column(default=1)  # 1-kun, 2-kun, ...
+
+    # Kunlik maqsadlar
+    daily_word_goal: Mapped[int] = mapped_column(default=20)  # kunlik so'z maqsadi: 10, 20, 30, 50
+    daily_quiz_goal: Mapped[int] = mapped_column(default=3)  # kunlik quiz maqsadi: 3, 5, 10
+
+    # Bugungi progress
+    words_learned_today: Mapped[int] = mapped_column(default=0)
+    last_learning_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
+    # O'rganish statistikasi
+    total_words_learned: Mapped[int] = mapped_column(default=0)
+    total_days_completed: Mapped[int] = mapped_column(default=0)
+
+    def reset_daily_progress(self) -> None:
+        """Kunlik progressni yangilash (yangi kun boshlanganda)"""
+        today = date.today()
+        if self.last_learning_date != today:
+            self.words_learned_today = 0
+            self.quizzes_today = 0
+            self.last_learning_date = today
+            self.quiz_last_date = today
+
+    def add_words_learned(self, count: int) -> None:
+        """O'rganilgan so'zlarni qo'shish"""
+        self.reset_daily_progress()
+        self.words_learned_today += count
+        self.total_words_learned += count
+
+    @property
+    def daily_word_progress(self) -> float:
+        """Kunlik so'z maqsadiga erishish foizi"""
+        if self.daily_word_goal == 0:
+            return 100.0
+        return min(100.0, (self.words_learned_today / self.daily_word_goal) * 100)
+
+    @property
+    def daily_quiz_progress(self) -> float:
+        """Kunlik quiz maqsadiga erishish foizi"""
+        if self.daily_quiz_goal == 0:
+            return 100.0
+        return min(100.0, (self.quizzes_today / self.daily_quiz_goal) * 100)
+
+    @property
+    def daily_goal_reached(self) -> bool:
+        """Kunlik maqsadga erishilganmi"""
+        return self.words_learned_today >= self.daily_word_goal
+
+    @property
+    def has_learning_settings(self) -> bool:
+        """O'rganish sozlamalari mavjudmi (Quick Start uchun)"""
+        return self.current_level_id is not None

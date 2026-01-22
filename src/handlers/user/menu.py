@@ -353,3 +353,309 @@ Darajangizni tanlang 👇
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
+
+
+# =====================================================
+# O'RGANISH SOZLAMALARI (Learning Settings)
+# =====================================================
+
+@router.callback_query(F.data == "settings:learning")
+async def settings_learning(callback: CallbackQuery, db_user: User):
+    """O'rganish sozlamalari - asosiy sahifa"""
+    from src.services import quiz_service
+
+    # Joriy daraja nomini olish
+    current_level_name = "Tanlanmagan"
+    current_day_text = ""
+
+    if db_user.current_level_id:
+        try:
+            levels = await quiz_service.get_levels()
+            for level in levels:
+                if level["id"] == db_user.current_level_id:
+                    current_level_name = level["name"]
+                    break
+            current_day_text = f"\n📅 Joriy kun: <b>{db_user.current_day_number}-kun</b>"
+        except:
+            pass
+
+    # Progress bar yasash
+    word_progress = db_user.daily_word_progress
+    word_bar = _create_progress_bar(word_progress)
+
+    quiz_progress = db_user.daily_quiz_progress
+    quiz_bar = _create_progress_bar(quiz_progress)
+
+    text = f"""
+📚 <b>O'rganish sozlamalari</b>
+
+<b>Joriy holat:</b>
+📊 Daraja: <b>{current_level_name}</b>{current_day_text}
+
+<b>Kunlik maqsadlar:</b>
+📝 So'zlar: {db_user.words_learned_today}/{db_user.daily_word_goal}
+{word_bar} {word_progress:.0f}%
+
+🎯 Quizlar: {db_user.quizzes_today}/{db_user.daily_quiz_goal}
+{quiz_bar} {quiz_progress:.0f}%
+
+<b>Umumiy statistika:</b>
+📖 Jami o'rganilgan so'zlar: {db_user.total_words_learned}
+✅ Tugatilgan kunlar: {db_user.total_days_completed}
+
+Sozlashni tanlang 👇
+"""
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=f"📊 Daraja: {current_level_name}",
+            callback_data="settings:change_level"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=f"📝 Kunlik so'z: {db_user.daily_word_goal}",
+            callback_data="settings:daily_words"
+        ),
+        InlineKeyboardButton(
+            text=f"🎯 Kunlik quiz: {db_user.daily_quiz_goal}",
+            callback_data="settings:daily_quizzes"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="🔄 Progressni qayta boshlash",
+            callback_data="settings:reset_progress"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data="settings:menu")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+def _create_progress_bar(percentage: float, length: int = 10) -> str:
+    """Progress bar yaratish"""
+    filled = int(percentage / 100 * length)
+    empty = length - filled
+    return "█" * filled + "░" * empty
+
+
+@router.callback_query(F.data == "settings:change_level")
+async def settings_change_level(callback: CallbackQuery, db_user: User):
+    """Darajani o'zgartirish"""
+    from src.services import quiz_service
+
+    levels = await quiz_service.get_levels()
+
+    text = """
+📊 <b>Darajani tanlang</b>
+
+Yangi darajani tanlasangiz, o'rganish 1-kundan boshlanadi.
+
+⚠️ Joriy progressingiz saqlanadi, lekin yangi darajadan boshlanadi.
+"""
+
+    builder = InlineKeyboardBuilder()
+
+    level_icons = {"A1": "🟢", "A2": "🟡", "B1": "🔵", "B2": "🟣", "C1": "🟠", "C2": "🔴"}
+
+    for level in levels:
+        icon = level_icons.get(level["name"], "📚")
+        is_current = " ✓" if level["id"] == db_user.current_level_id else ""
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{icon} {level['name']}{is_current}",
+                callback_data=f"settings:set_level:{level['id']}"
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data="settings:learning")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("settings:set_level:"))
+async def settings_set_level(callback: CallbackQuery, db_user: User):
+    """Darajani o'rnatish"""
+    level_id = int(callback.data.split(":")[-1])
+
+    async with get_session() as session:
+        from src.repositories import UserRepository
+        from src.services import quiz_service
+
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(db_user.user_id)
+
+        if user:
+            user.current_level_id = level_id
+            user.current_day_number = 1
+            user.current_day_id = None  # Birinchi kun avtomatik tanlanadi
+
+            # Birinchi kunni olish
+            days = await quiz_service.get_days(level_id)
+            if days:
+                user.current_day_id = days[0]["id"]
+
+            user.onboarding_completed = True
+            await user_repo.save(user)
+
+    await callback.answer("✅ Daraja o'zgartirildi! 1-kundan boshlanadi.", show_alert=True)
+    await settings_learning(callback, db_user)
+
+
+@router.callback_query(F.data == "settings:daily_words")
+async def settings_daily_words(callback: CallbackQuery, db_user: User):
+    """Kunlik so'z maqsadini sozlash"""
+    text = f"""
+📝 <b>Kunlik so'z maqsadi</b>
+
+Joriy: <b>{db_user.daily_word_goal}</b> ta so'z
+
+Har kuni nechta so'z o'rganmoqchisiz?
+"""
+
+    builder = InlineKeyboardBuilder()
+    goals = [10, 20, 30, 50, 100]
+
+    for goal in goals:
+        is_current = " ✓" if goal == db_user.daily_word_goal else ""
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{goal} ta so'z{is_current}",
+                callback_data=f"settings:set_word_goal:{goal}"
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data="settings:learning")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("settings:set_word_goal:"))
+async def settings_set_word_goal(callback: CallbackQuery, db_user: User):
+    """Kunlik so'z maqsadini o'rnatish"""
+    goal = int(callback.data.split(":")[-1])
+
+    async with get_session() as session:
+        from src.repositories import UserRepository
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(db_user.user_id)
+        if user:
+            user.daily_word_goal = goal
+            await user_repo.save(user)
+
+    await callback.answer(f"✅ Kunlik maqsad: {goal} ta so'z", show_alert=True)
+    await settings_learning(callback, db_user)
+
+
+@router.callback_query(F.data == "settings:daily_quizzes")
+async def settings_daily_quizzes(callback: CallbackQuery, db_user: User):
+    """Kunlik quiz maqsadini sozlash"""
+    text = f"""
+🎯 <b>Kunlik quiz maqsadi</b>
+
+Joriy: <b>{db_user.daily_quiz_goal}</b> ta quiz
+
+Har kuni nechta quiz yechmoqchisiz?
+"""
+
+    builder = InlineKeyboardBuilder()
+    goals = [3, 5, 10, 15, 20]
+
+    for goal in goals:
+        is_current = " ✓" if goal == db_user.daily_quiz_goal else ""
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{goal} ta quiz{is_current}",
+                callback_data=f"settings:set_quiz_goal:{goal}"
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data="settings:learning")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("settings:set_quiz_goal:"))
+async def settings_set_quiz_goal(callback: CallbackQuery, db_user: User):
+    """Kunlik quiz maqsadini o'rnatish"""
+    goal = int(callback.data.split(":")[-1])
+
+    async with get_session() as session:
+        from src.repositories import UserRepository
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(db_user.user_id)
+        if user:
+            user.daily_quiz_goal = goal
+            await user_repo.save(user)
+
+    await callback.answer(f"✅ Kunlik maqsad: {goal} ta quiz", show_alert=True)
+    await settings_learning(callback, db_user)
+
+
+@router.callback_query(F.data == "settings:reset_progress")
+async def settings_reset_progress(callback: CallbackQuery, db_user: User):
+    """Progressni qayta boshlash - tasdiqlash"""
+    text = """
+⚠️ <b>Progressni qayta boshlash</b>
+
+Bu amal quyidagilarni qayta boshlaydi:
+• Joriy kun 1-kunga qaytadi
+• Kunlik progress nollanadi
+
+<b>Statistikangiz saqlanadi:</b>
+• Jami o'rganilgan so'zlar
+• Streak
+• Yutuqlar
+
+Davom etasizmi?
+"""
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Ha, qayta boshlash", callback_data="settings:confirm_reset"),
+        InlineKeyboardButton(text="❌ Yo'q", callback_data="settings:learning")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "settings:confirm_reset")
+async def settings_confirm_reset(callback: CallbackQuery, db_user: User):
+    """Progressni qayta boshlash - amalga oshirish"""
+    async with get_session() as session:
+        from src.repositories import UserRepository
+        from src.services import quiz_service
+
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(db_user.user_id)
+
+        if user:
+            user.current_day_number = 1
+            user.words_learned_today = 0
+            user.quizzes_today = 0
+
+            # Birinchi kunni olish
+            if user.current_level_id:
+                days = await quiz_service.get_days(user.current_level_id)
+                if days:
+                    user.current_day_id = days[0]["id"]
+
+            await user_repo.save(user)
+
+    await callback.answer("✅ Progress qayta boshlandi!", show_alert=True)
+    await settings_learning(callback, db_user)

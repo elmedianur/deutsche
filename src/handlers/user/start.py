@@ -94,6 +94,7 @@ async def start_with_referral(
 @router.message(CommandStart())
 async def start_command(message: Message, db_user: User, **kwargs):
     """Handle /start command"""
+    from datetime import date
 
     # Check for required channels
     not_subscribed = kwargs.get("not_subscribed_channels", [])
@@ -112,29 +113,444 @@ async def start_command(message: Message, db_user: User, **kwargs):
         )
         return
 
-    # Always show main menu
+    # Kunlik progressni yangilash
+    today = date.today()
+    if db_user.last_learning_date != today:
+        async with get_session() as session:
+            user_repo = UserRepository(session)
+            user = await user_repo.get_by_user_id(db_user.user_id)
+            if user:
+                user.reset_daily_progress()
+                await user_repo.save(user)
+                db_user = user
+
     # Get streak info
     streak_count = 0
     if db_user.streak:
         streak_count = db_user.streak.current_streak
 
+    # Birinchi marta kirganlar uchun - Onboarding
+    if not db_user.onboarding_completed:
+        await show_onboarding(message, db_user)
+        return
+
+    # Quick Start uchun ma'lumotlar
+    level_name = ""
+    if db_user.current_level_id:
+        try:
+            from src.services import quiz_service
+            levels = await quiz_service.get_levels()
+            for level in levels:
+                if level["id"] == db_user.current_level_id:
+                    level_name = level["name"]
+                    break
+        except:
+            pass
+
+    # Progress bar
+    word_progress = db_user.daily_word_progress
+    word_bar = _create_progress_bar(word_progress)
+    quiz_progress = db_user.daily_quiz_progress
+    quiz_bar = _create_progress_bar(quiz_progress)
+
+    # Maqsadga erishish xabari
+    goal_message = ""
+    if db_user.daily_goal_reached:
+        goal_message = "\n🎉 <b>Bugungi maqsadga erishdingiz!</b>"
+    else:
+        remaining = db_user.daily_word_goal - db_user.words_learned_today
+        goal_message = f"\n📝 Maqsadgacha: <b>{remaining}</b> ta so'z qoldi"
+
     welcome_text = f"""
-👋 <b>Assalomu alaykum, {db_user.full_name}!</b>
+👋 <b>Xush kelibsiz, {db_user.full_name}!</b>
 
-🎓 <b>Quiz Bot Pro</b> - til o'rganish uchun eng yaxshi bot!
+🔥 Streak: <b>{streak_count}</b> kun
+📊 Daraja: <b>{level_name or "Tanlanmagan"}</b> | {db_user.current_day_number}-kun
 
-📊 <b>Sizning statistikangiz:</b>
-├ 📝 Quiz'lar: {db_user.total_quizzes}
-├ ✅ To'g'ri javoblar: {db_user.total_correct}
-├ 🎯 Aniqlik: {db_user.accuracy:.1f}%
-└ 🔥 Streak: {streak_count} kun
+<b>Bugungi progress:</b>
+📝 So'zlar: {db_user.words_learned_today}/{db_user.daily_word_goal}
+{word_bar} {word_progress:.0f}%
+
+🎯 Quizlar: {db_user.quizzes_today}/{db_user.daily_quiz_goal}
+{quiz_bar} {quiz_progress:.0f}%
+{goal_message}
 
 Davom etamizmi? 👇
 """
-    await message.answer(
-        welcome_text,
-        reply_markup=main_menu_keyboard()
+
+    # Keyboard with Quick Start
+    keyboard = _create_start_keyboard(db_user, level_name)
+
+    await message.answer(welcome_text, reply_markup=keyboard)
+
+
+def _create_progress_bar(percentage: float, length: int = 10) -> str:
+    """Progress bar yaratish"""
+    filled = int(percentage / 100 * length)
+    empty = length - filled
+    return "█" * filled + "░" * empty
+
+
+def _create_start_keyboard(db_user: User, level_name: str):
+    """Start sahifasi uchun keyboard"""
+    builder = InlineKeyboardBuilder()
+
+    # Quick Start tugmasi (agar sozlamalar mavjud bo'lsa)
+    if db_user.has_learning_settings:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"▶️ Davom etish ({level_name} - {db_user.current_day_number}-kun)",
+                callback_data="quick:start"
+            )
+        )
+
+    # Asosiy tugmalar
+    builder.row(
+        InlineKeyboardButton(text="📚 So'z o'rganish", callback_data="learn:words"),
+        InlineKeyboardButton(text="🎯 Quiz", callback_data="quiz:start")
     )
+    builder.row(
+        InlineKeyboardButton(text="📊 Statistika", callback_data="stats:menu"),
+        InlineKeyboardButton(text="🏆 Yutuqlar", callback_data="achievements:menu")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="settings:menu"),
+        InlineKeyboardButton(text="👋 Chiqish", callback_data="session:end")
+    )
+
+    return builder.as_markup()
+
+
+async def show_onboarding(message: Message, db_user: User):
+    """Birinchi marta kirganlar uchun onboarding"""
+    text = f"""
+👋 <b>Xush kelibsiz, {db_user.full_name}!</b>
+
+🎓 <b>Quiz Bot Pro</b> - til o'rganish uchun eng yaxshi bot!
+
+Sizni til o'rganish sayohatingizda qo'llab-quvvatlaymiz.
+
+<b>Boshlash uchun bir necha sozlama:</b>
+
+1️⃣ O'rganish darajangizni tanlang
+2️⃣ Kunlik maqsadingizni belgilang
+3️⃣ O'rganishni boshlang!
+
+Darajangizni tanlang 👇
+"""
+
+    builder = InlineKeyboardBuilder()
+
+    level_icons = {"A1": "🟢", "A2": "🟡", "B1": "🔵", "B2": "🟣", "C1": "🟠", "C2": "🔴"}
+
+    builder.row(
+        InlineKeyboardButton(text="🟢 A1 - Boshlang'ich", callback_data="onboard:setup:A1"),
+        InlineKeyboardButton(text="🟡 A2 - Elementar", callback_data="onboard:setup:A2")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔵 B1 - O'rta", callback_data="onboard:setup:B1"),
+        InlineKeyboardButton(text="🟣 B2 - Yuqori o'rta", callback_data="onboard:setup:B2")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🟠 C1 - Ilg'or", callback_data="onboard:setup:C1"),
+        InlineKeyboardButton(text="🔴 C2 - Mutaxassis", callback_data="onboard:setup:C2")
+    )
+    builder.row(
+        InlineKeyboardButton(text="❓ Qaysi darajani tanlashni bilmayman", callback_data="onboard:help_level")
+    )
+
+    await message.answer(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "onboard:help_level")
+async def onboard_help_level(callback: CallbackQuery):
+    """Daraja tanlashda yordam"""
+    text = """
+❓ <b>Qaysi darajani tanlash kerak?</b>
+
+<b>🟢 A1 - Boshlang'ich</b>
+• Hech narsa bilmayman
+• Yangi boshlayman
+
+<b>🟡 A2 - Elementar</b>
+• Oddiy so'zlarni bilaman
+• Salomlashish, o'zimni tanishtira olaman
+
+<b>🔵 B1 - O'rta</b>
+• Oddiy gaplar tuza olaman
+• Kundalik mavzularda gaplasha olaman
+
+<b>🟣 B2 - Yuqori o'rta</b>
+• Erkin gaplasha olaman
+• Murakkab matnlarni tushunaman
+
+<b>💡 Tavsiya:</b>
+Ishonchsiz bo'lsangiz, <b>A1</b> dan boshlang!
+Keyinroq sozlamalardan o'zgartirishingiz mumkin.
+"""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🟢 A1 dan boshlash", callback_data="onboard:setup:A1")
+    )
+    builder.row(
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data="onboard:back")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "onboard:back")
+async def onboard_back(callback: CallbackQuery, db_user: User):
+    """Onboarding ga qaytish"""
+    await callback.message.delete()
+    # Re-send as new message
+    await show_onboarding(callback.message, db_user)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("onboard:setup:"))
+async def onboard_setup_level(callback: CallbackQuery, db_user: User):
+    """Onboarding - daraja va maqsad sozlash"""
+    level_name = callback.data.split(":")[-1]
+
+    from src.services import quiz_service
+
+    try:
+        # Tilni olish (nemis)
+        languages = await quiz_service.get_languages()
+        german = None
+        for lang in languages:
+            if "german" in lang["name"].lower() or "nemis" in lang["name"].lower():
+                german = lang
+                break
+        if not german and languages:
+            german = languages[0]
+
+        if not german:
+            await callback.answer("❌ Tillar topilmadi!", show_alert=True)
+            return
+
+        # Darajani olish
+        levels = await quiz_service.get_levels(german["id"])
+        selected_level = None
+        for level in levels:
+            if level_name.upper() in level["name"].upper():
+                selected_level = level
+                break
+
+        if not selected_level:
+            await callback.answer("❌ Daraja topilmadi!", show_alert=True)
+            return
+
+        # Birinchi kunni olish
+        days = await quiz_service.get_days(selected_level["id"])
+        first_day_id = days[0]["id"] if days else None
+
+        # Ma'lumotlarni saqlash
+        async with get_session() as session:
+            user_repo = UserRepository(session)
+            user = await user_repo.get_by_user_id(db_user.user_id)
+            if user:
+                user.current_language_id = german["id"]
+                user.current_level_id = selected_level["id"]
+                user.current_day_id = first_day_id
+                user.current_day_number = 1
+                user.onboarding_completed = True
+                await user_repo.save(user)
+
+        # Kunlik maqsad tanlash
+        text = f"""
+✅ <b>{level_name} darajasi tanlandi!</b>
+
+Endi kunlik maqsadingizni belgilang.
+
+<b>Har kuni nechta so'z o'rganmoqchisiz?</b>
+"""
+
+        builder = InlineKeyboardBuilder()
+        goals = [
+            ("10 ta so'z (Yengil)", 10),
+            ("20 ta so'z (O'rtacha)", 20),
+            ("30 ta so'z (Jadal)", 30),
+            ("50 ta so'z (Intensiv)", 50),
+        ]
+
+        for label, value in goals:
+            builder.row(
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"onboard:goal:{value}"
+                )
+            )
+
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+        await callback.answer(f"✅ {level_name} tanlandi!")
+
+    except Exception as e:
+        logger.error(f"Onboard setup error: {e}")
+        await callback.answer("❌ Xatolik yuz berdi!", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("onboard:goal:"))
+async def onboard_set_goal(callback: CallbackQuery, db_user: User):
+    """Kunlik maqsadni saqlash va yakunlash"""
+    goal = int(callback.data.split(":")[-1])
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(db_user.user_id)
+        if user:
+            user.daily_word_goal = goal
+            await user_repo.save(user)
+
+    text = f"""
+🎉 <b>Ajoyib! Hammasi tayyor!</b>
+
+✅ Daraja sozlandi
+✅ Kunlik maqsad: <b>{goal}</b> ta so'z
+
+<b>Endi nima qilasiz?</b>
+
+📚 <b>So'z o'rganish</b> - yangi so'zlarni o'rganing
+🎯 <b>Quiz</b> - bilimingizni tekshiring
+
+Omad! 🍀
+"""
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📚 So'z o'rganishni boshlash", callback_data="learn:words")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🎯 Quiz boshlash", callback_data="quick:start")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="menu:main")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer("🎉 Sozlamalar saqlandi!")
+
+
+# =====================================================
+# QUICK START - Tezkor boshlash
+# =====================================================
+
+@router.callback_query(F.data == "quick:start")
+async def quick_start(callback: CallbackQuery, db_user: User):
+    """Tezkor boshlash - saqlangan darajadan davom etish"""
+    from src.services import quiz_service
+    from aiogram.fsm.context import FSMContext
+
+    if not db_user.has_learning_settings:
+        await callback.answer("⚙️ Avval sozlamalarni bajaring!", show_alert=True)
+        await show_onboarding(callback.message, db_user)
+        return
+
+    try:
+        # Joriy daraja nomini olish
+        level_name = ""
+        levels = await quiz_service.get_levels()
+        for level in levels:
+            if level["id"] == db_user.current_level_id:
+                level_name = level["name"]
+                break
+
+        # Quizga yo'naltirish (joriy kun bilan)
+        from src.keyboards.inline import question_count_keyboard
+
+        text = f"""
+▶️ <b>Davom etish</b>
+
+📊 Daraja: <b>{level_name}</b>
+📅 Kun: <b>{db_user.current_day_number}</b>
+
+🔢 Savollar sonini tanlang:
+"""
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=question_count_keyboard(back_callback="menu:main")
+        )
+        await callback.answer()
+
+    except Exception as e:
+        logger.error(f"Quick start error: {e}")
+        await callback.answer("❌ Xatolik yuz berdi!", show_alert=True)
+
+
+# =====================================================
+# CHIQISH - Session yakunlash
+# =====================================================
+
+@router.callback_query(F.data == "session:end")
+async def session_end(callback: CallbackQuery, db_user: User):
+    """Sessiyani yakunlash va natijalarni ko'rsatish"""
+
+    # Streak ma'lumotlari
+    streak_count = 0
+    if db_user.streak:
+        streak_count = db_user.streak.current_streak
+
+    # Bugungi yutuqlar
+    achievements_today = []
+    extra_message = ""
+
+    # Maqsadga erishganmi?
+    if db_user.daily_goal_reached:
+        extra_message = "\n🎉 <b>Bugungi maqsadga erishdingiz! Ajoyib!</b>"
+        achievements_today.append("🎯 Kunlik maqsad bajarildi")
+
+    # Streak yutuqi
+    if streak_count > 0 and streak_count % 7 == 0:
+        achievements_today.append(f"🔥 {streak_count} kunlik streak!")
+
+    # Yangi so'zlar
+    if db_user.words_learned_today >= 10:
+        achievements_today.append(f"📚 {db_user.words_learned_today} ta yangi so'z")
+
+    achievements_text = ""
+    if achievements_today:
+        achievements_text = "\n\n<b>🏆 Bugungi yutuqlar:</b>\n" + "\n".join(f"• {a}" for a in achievements_today)
+
+    # Keyingi sessiya uchun eslatma
+    remaining_words = max(0, db_user.daily_word_goal - db_user.words_learned_today)
+    remaining_quizzes = max(0, db_user.daily_quiz_goal - db_user.quizzes_today)
+
+    next_session_text = ""
+    if remaining_words > 0 or remaining_quizzes > 0:
+        next_session_text = f"""
+
+<b>📋 Keyingi safar:</b>
+"""
+        if remaining_words > 0:
+            next_session_text += f"• 📝 {remaining_words} ta so'z o'rganish\n"
+        if remaining_quizzes > 0:
+            next_session_text += f"• 🎯 {remaining_quizzes} ta quiz yechish\n"
+
+    text = f"""
+👋 <b>Xayr, {db_user.full_name}!</b>
+
+<b>Bugungi natijalar:</b>
+├ 📝 O'rganilgan so'zlar: {db_user.words_learned_today}
+├ 🎯 Yechilgan quizlar: {db_user.quizzes_today}
+├ 🔥 Streak: {streak_count} kun
+└ 📊 Umumiy so'zlar: {db_user.total_words_learned}
+{extra_message}{achievements_text}{next_session_text}
+<i>Ertaga yana kuting! Streak'ni yo'qotmang! 🌟</i>
+"""
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="▶️ Davom etish", callback_data="quick:start")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="menu:main")
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer("👋 Ko'rishguncha!")
 
 
 @router.callback_query(F.data == "check:subscription")
