@@ -228,8 +228,9 @@ def rate_limit(
                     break
             
             if user_id is None:
-                # If no user_id found, skip rate limiting
-                return await func(*args, **kwargs)
+                # Fallback key - user_id topilmasa ham rate limiting qo'llaniladi
+                # Bu xavfsizlik bypass'ini oldini oladi
+                user_id = "unknown"
             
             # Generate key
             if key_func:

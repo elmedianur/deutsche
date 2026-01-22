@@ -289,23 +289,108 @@ async def auto_suspend_mastered_cards():
     from src.database import get_session
     from src.services.flashcard_maintenance import FlashcardMaintenanceService
     from src.core.logging import get_logger
-    
+
     logger = get_logger(__name__)
-    
+
     try:
         async with get_session() as session:
             maintenance = FlashcardMaintenanceService(session)
             result = await maintenance.run_auto_suspend(threshold_days=180)
-            
+
             if result.get("status") == "success":
                 logger.info(
                     f"Auto-suspend: {result['total_suspended']} ta kartochka arxivlandi"
                 )
             else:
                 logger.error(f"Auto-suspend xatolik: {result.get('error')}")
-                
+
     except Exception as e:
         logger.error(f"Auto-suspend job error: {e}")
+
+
+async def check_subscription_expiry(bot: Bot):
+    """Muddati tugagan obunalarni tekshirish va o'chirish
+
+    Bu job har kuni ishlab, muddati tugagan premium foydalanuvchilarni
+    aniqlaydi va ularning premium statusini o'chiradi.
+    """
+    from src.database import get_session
+    from src.repositories import SubscriptionRepository, UserRepository
+    from src.database.models import SubscriptionPlan
+    from src.core.logging import get_logger, audit_logger
+    from datetime import datetime
+
+    logger = get_logger(__name__)
+
+    try:
+        async with get_session() as session:
+            sub_repo = SubscriptionRepository(session)
+            user_repo = UserRepository(session)
+
+            # Muddati tugagan obunalarni olish va expire qilish
+            expired_count = await sub_repo.expire_old_subscriptions()
+
+            if expired_count > 0:
+                logger.info(f"Subscription expiry: {expired_count} ta obuna tugadi")
+
+                # Audit log
+                audit_logger.log_admin_action(
+                    admin_id=0,  # System action
+                    action="subscription_auto_expire",
+                    target="system",
+                    details={"expired_count": expired_count}
+                )
+
+            # Tugagan obunali userlarning premium statusini yangilash
+            # Bu alohida query - user is_premium flagini to'g'rilash
+            from sqlalchemy import select, update
+            from src.database.models import User, Subscription
+
+            now = datetime.utcnow()
+
+            # Premium userlari ichidan muddati tugaganlarni topish
+            result = await session.execute(
+                select(User.user_id)
+                .join(Subscription, User.user_id == Subscription.user_id)
+                .where(
+                    User.is_premium == True,
+                    Subscription.plan != SubscriptionPlan.LIFETIME,
+                    Subscription.expires_at < now
+                )
+            )
+            expired_user_ids = [row[0] for row in result.fetchall()]
+
+            if expired_user_ids:
+                # Batch update - premium statusini o'chirish
+                await session.execute(
+                    update(User)
+                    .where(User.user_id.in_(expired_user_ids))
+                    .values(is_premium=False)
+                )
+                await session.commit()
+
+                logger.info(f"Premium status removed from {len(expired_user_ids)} users")
+
+                # Har bir foydalanuvchiga xabar yuborish (optional)
+                notified = 0
+                for user_id in expired_user_ids[:50]:  # Max 50 notification
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            "⏰ <b>Premium obunangiz tugadi!</b>\n\n"
+                            "Premium imkoniyatlaridan foydalanishda davom etish uchun "
+                            "obunani yangilang.\n\n"
+                            "💎 /premium - Obunani yangilash",
+                            parse_mode="HTML"
+                        )
+                        notified += 1
+                    except Exception:
+                        pass  # User blocked bot or deactivated
+
+                logger.info(f"Expiry notifications sent: {notified}")
+
+    except Exception as e:
+        logger.error(f"Subscription expiry check error: {e}")
 
 
 
@@ -354,6 +439,16 @@ def setup_scheduler(bot: Bot):
         id="cleanup_items",
         replace_existing=True
     )
+
+    # Har kuni 01:00 da subscription expiry tekshirish
+    scheduler.add_job(
+        check_subscription_expiry,
+        CronTrigger(hour=1, minute=0),
+        args=[bot],
+        id="subscription_expiry_check",
+        replace_existing=True
+    )
+
     # Har kuni 03:00 da mastered kartochkalarni arxivlash
     scheduler.add_job(
         auto_suspend_mastered_cards,
@@ -372,7 +467,7 @@ def setup_scheduler(bot: Bot):
     )
 
     scheduler.start()
-    logger.info("Scheduler jobs: tournament, reminders, cleanup, memory_cleanup")
+    logger.info("Scheduler jobs: tournament, reminders, cleanup, subscription_expiry, memory_cleanup")
     return scheduler
 
 async def on_startup(bot: Bot) -> None:

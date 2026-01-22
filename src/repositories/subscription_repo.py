@@ -3,7 +3,7 @@ Subscription repository - Payment and subscription data access
 """
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, update
 
 from src.database.models import (
     Subscription, Payment, PromoCode, PromoCodeUsage,
@@ -89,7 +89,7 @@ class SubscriptionRepository(BaseRepository[Subscription]):
     async def get_expiring_soon(self, days: int = 3) -> List[Subscription]:
         """Get subscriptions expiring within days"""
         from datetime import timedelta
-        
+
         threshold = datetime.utcnow() + timedelta(days=days)
         result = await self.session.execute(
             select(Subscription).where(
@@ -101,6 +101,32 @@ class SubscriptionRepository(BaseRepository[Subscription]):
             )
         )
         return list(result.scalars().all())
+
+    async def expire_old_subscriptions(self) -> int:
+        """Muddati tugagan obunalarni FREE ga o'zgartirish
+
+        Bu metod muddati o'tgan barcha premium obunalarni
+        (LIFETIME dan tashqari) FREE statusga o'tkazadi.
+
+        Returns:
+            int: O'zgartirilgan obunalar soni
+        """
+        now = datetime.utcnow()
+
+        result = await self.session.execute(
+            update(Subscription)
+            .where(
+                and_(
+                    Subscription.expires_at != None,
+                    Subscription.expires_at < now,
+                    Subscription.plan != SubscriptionPlan.FREE,
+                    Subscription.plan != SubscriptionPlan.LIFETIME
+                )
+            )
+            .values(plan=SubscriptionPlan.FREE)
+        )
+        await self.session.commit()
+        return result.rowcount
 
 
 class PaymentRepository(BaseRepository[Payment]):

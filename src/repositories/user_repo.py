@@ -3,7 +3,7 @@ User repository - User data access
 """
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, update
 
 from src.database.models import User, UserStreak, Subscription, SubscriptionPlan
 from src.repositories.base import BaseRepository
@@ -177,11 +177,17 @@ class UserRepository(BaseRepository[User]):
         return await self.count({"is_premium": True})
     
     async def increment_referral_count(self, user_id: int) -> None:
-        """Increment referral count for user"""
-        user = await self.get_by_user_id(user_id)
-        if user:
-            user.referral_count += 1
-            await self.save(user)
+        """Increment referral count for user - ATOMIC operation
+
+        Bu SQL UPDATE orqali atomik ravishda amalga oshiriladi,
+        race condition oldini olish uchun.
+        """
+        await self.session.execute(
+            update(User)
+            .where(User.user_id == user_id)
+            .values(referral_count=User.referral_count + 1)
+        )
+        await self.session.flush()
 
 
     async def count_today(self) -> int:

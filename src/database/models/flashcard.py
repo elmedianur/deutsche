@@ -4,7 +4,7 @@ Flashcard system models
 from datetime import datetime, date, timedelta
 from typing import Optional, TYPE_CHECKING
 from enum import Enum
-from sqlalchemy import String, Text, ForeignKey, Integer, BigInteger, DateTime, Boolean, Date, Float, Enum as SQLEnum
+from sqlalchemy import String, Text, ForeignKey, Integer, BigInteger, DateTime, Boolean, Date, Float, Enum as SQLEnum, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base, TimestampMixin, ActiveMixin
@@ -129,9 +129,13 @@ class UserFlashcard(Base, TimestampMixin):
     User's progress on individual flashcard.
     Implements SM-2 spaced repetition.
     """
-    
+
     __tablename__ = "user_flashcards"
-    
+    __table_args__ = (
+        # Har bir user har bir kartani faqat 1 marta o'rganadi
+        UniqueConstraint('user_id', 'card_id', name='uq_user_flashcard'),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     card_id: Mapped[int] = mapped_column(
@@ -254,9 +258,13 @@ class UserFlashcard(Base, TimestampMixin):
 
 class UserDeckProgress(Base, TimestampMixin):
     """User's overall progress on a deck"""
-    
+
     __tablename__ = "user_deck_progress"
-    
+    __table_args__ = (
+        # Har bir user har bir deck uchun faqat 1 ta progress yozuvi
+        UniqueConstraint('user_id', 'deck_id', name='uq_user_deck_progress'),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     deck_id: Mapped[int] = mapped_column(
@@ -322,5 +330,6 @@ class UserDeckPurchase(Base, TimestampMixin):
     
     __table_args__ = (
         # Har bir user har bir deckni faqat 1 marta sotib oladi
+        UniqueConstraint('user_id', 'deck_id', name='uq_user_deck_purchase'),
         {"sqlite_autoincrement": True},
     )

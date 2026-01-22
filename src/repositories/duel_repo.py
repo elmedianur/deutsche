@@ -4,6 +4,7 @@ Duel Repository - Duel CRUD operations
 from datetime import datetime, timedelta
 from typing import Optional, List
 from sqlalchemy import select, update, and_, or_, desc
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import Duel, DuelStats, DuelStatus
@@ -76,11 +77,28 @@ class DuelRepository(BaseRepository):
         return result.scalar_one_or_none()
     
     async def accept_duel(self, duel_id: int, opponent_id: int) -> Optional[Duel]:
-        """Duelni qabul qilish"""
-        duel = await self.get_by_id(duel_id)
-        if not duel or duel.status != DuelStatus.PENDING:
+        """Duelni qabul qilish - race condition himoyasi bilan
+
+        SELECT FOR UPDATE orqali row lock qo'yiladi,
+        ikki kishi bir vaqtda qabul qilishini oldini oladi.
+        """
+        # SELECT FOR UPDATE - row'ni lock qilish
+        result = await self.session.execute(
+            select(Duel)
+            .where(
+                and_(
+                    Duel.id == duel_id,
+                    Duel.status == DuelStatus.PENDING,
+                    Duel.opponent_id.is_(None)  # Hali qabul qilinmagan
+                )
+            )
+            .with_for_update(nowait=True)  # Lock yoki xato
+        )
+        duel = result.scalar_one_or_none()
+
+        if not duel:
             return None
-        
+
         duel.accept(opponent_id)
         await self.session.commit()
         await self.session.refresh(duel)
@@ -103,19 +121,25 @@ class DuelRepository(BaseRepository):
         correct: int,
         time_taken: float
     ) -> Optional[Duel]:
-        """Challenger natijasini yangilash"""
-        duel = await self.get_by_id(duel_id)
+        """Challenger natijasini yangilash - race condition himoyasi bilan"""
+        # SELECT FOR UPDATE - atomik yangilash uchun
+        result = await self.session.execute(
+            select(Duel)
+            .where(Duel.id == duel_id)
+            .with_for_update()
+        )
+        duel = result.scalar_one_or_none()
         if not duel:
             return None
-        
+
         duel.challenger_score = score
         duel.challenger_correct = correct
         duel.challenger_time = time_taken
         duel.challenger_completed = True
-        
+
         if duel.opponent_completed:
             duel.complete()
-        
+
         await self.session.commit()
         await self.session.refresh(duel)
         return duel
@@ -127,19 +151,25 @@ class DuelRepository(BaseRepository):
         correct: int,
         time_taken: float
     ) -> Optional[Duel]:
-        """Opponent natijasini yangilash"""
-        duel = await self.get_by_id(duel_id)
+        """Opponent natijasini yangilash - race condition himoyasi bilan"""
+        # SELECT FOR UPDATE - atomik yangilash uchun
+        result = await self.session.execute(
+            select(Duel)
+            .where(Duel.id == duel_id)
+            .with_for_update()
+        )
+        duel = result.scalar_one_or_none()
         if not duel:
             return None
-        
+
         duel.opponent_score = score
         duel.opponent_correct = correct
         duel.opponent_time = time_taken
         duel.opponent_completed = True
-        
+
         if duel.challenger_completed:
             duel.complete()
-        
+
         await self.session.commit()
         await self.session.refresh(duel)
         return duel

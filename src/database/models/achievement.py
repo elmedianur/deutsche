@@ -4,7 +4,7 @@ Achievement/Badge system models
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 from enum import Enum
-from sqlalchemy import String, Text, ForeignKey, Integer, BigInteger, DateTime, Boolean, Enum as SQLEnum
+from sqlalchemy import String, Text, ForeignKey, Integer, BigInteger, DateTime, Boolean, Enum as SQLEnum, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base, TimestampMixin
@@ -96,9 +96,13 @@ class Achievement(Base, TimestampMixin):
 
 class UserAchievement(Base, TimestampMixin):
     """User's earned achievements"""
-    
+
     __tablename__ = "user_achievements"
-    
+    __table_args__ = (
+        # Har bir user har bir achievement'ni faqat 1 marta oladi
+        UniqueConstraint('user_id', 'achievement_id', name='uq_user_achievement'),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
         BigInteger,

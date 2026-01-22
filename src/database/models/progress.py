@@ -1,12 +1,21 @@
 """
 Progress and Streak models
 """
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, Float, ForeignKey, Integer, BigInteger, Date, DateTime, Boolean
+from sqlalchemy import String, Float, ForeignKey, Integer, BigInteger, Date, DateTime, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base, TimestampMixin
+
+
+def utc_today() -> date:
+    """UTC timezone bo'yicha bugungi sanani qaytaradi.
+
+    Bu funksiya server timezone'dan qat'i nazar,
+    doim UTC vaqtini ishlatadi.
+    """
+    return datetime.now(timezone.utc).date()
 
 if TYPE_CHECKING:
     from .user import User
@@ -114,17 +123,24 @@ class UserStreak(Base, TimestampMixin):
         """
         Check streak status and update accordingly.
         Returns dict with status info.
+
+        UTC timezone ishlatiladi barcha sana hisoblari uchun.
         """
-        today = date.today()
-        
+        today = utc_today()  # UTC timezone ishlatiladi
+
         result = {
             "streak_maintained": False,
             "streak_increased": False,
             "streak_lost": False,
+            "freeze_used": False,
             "bonus_earned": 0,
             "new_streak": self.current_streak
         }
-        
+
+        # Yangi kun boshlansa freeze flagni reset qilish
+        if self.last_activity_date and self.last_activity_date < today:
+            self.freeze_used_today = False
+
         if self.last_activity_date is None:
             # First activity
             self.current_streak = 1
@@ -132,51 +148,55 @@ class UserStreak(Base, TimestampMixin):
             self.streak_start_date = today
             result["streak_increased"] = True
             result["new_streak"] = 1
-            
+
         elif self.last_activity_date == today:
             # Already recorded today
             result["streak_maintained"] = True
-            
+
         elif self.last_activity_date == today - timedelta(days=1):
             # Consecutive day
             self.current_streak += 1
             self.last_activity_date = today
             result["streak_increased"] = True
             result["new_streak"] = self.current_streak
-            
+
             # Milestone bonuses
             if self.current_streak in [7, 30, 100, 365]:
                 result["bonus_earned"] = self._calculate_milestone_bonus()
                 self.total_bonus_earned += result["bonus_earned"]
-            
+
         else:
             # Streak broken
             days_missed = (today - self.last_activity_date).days
-            
-            if days_missed == 2 and self.freeze_count > 0 and not self.freeze_used_today:
-                # Use freeze
+
+            # TUZATILDI: days_missed >= 2 (oldin == 2 edi)
+            # Freeze 2 yoki undan ko'p kun o'tkazib yuborilganda ishlaydi
+            if days_missed >= 2 and self.freeze_count > 0 and not self.freeze_used_today:
+                # Use freeze - streak saqlanadi
                 self.freeze_count -= 1
                 self.freeze_used_today = True
+                # last_activity ni kechagi kunga o'rnatish (streak davom etadi deb hisoblanadi)
                 self.last_activity_date = today - timedelta(days=1)
                 result["streak_maintained"] = True
+                result["freeze_used"] = True
+                # Endi bugungi faollikni qayta tekshirish
+                self.current_streak += 1
+                self.last_activity_date = today
+                result["streak_increased"] = True
+                result["new_streak"] = self.current_streak
             else:
                 # Reset streak
                 result["streak_lost"] = True
                 result["previous_streak"] = self.current_streak
                 self.current_streak = 1
                 self.streak_start_date = today
-            
-            self.last_activity_date = today
-            result["new_streak"] = self.current_streak
-        
+                self.last_activity_date = today
+                result["new_streak"] = self.current_streak
+
         # Update longest streak
         if self.current_streak > self.longest_streak:
             self.longest_streak = self.current_streak
-        
-        # Reset daily freeze flag
-        if today != self.last_activity_date:
-            self.freeze_used_today = False
-        
+
         return result
     
     def _calculate_milestone_bonus(self) -> int:
@@ -200,8 +220,8 @@ class UserStreak(Base, TimestampMixin):
     
     @property
     def is_active_today(self) -> bool:
-        """Check if user was active today"""
-        return self.last_activity_date == date.today()
+        """Check if user was active today (UTC)"""
+        return self.last_activity_date == utc_today()
 
 
 class SpacedRepetition(Base, TimestampMixin):
@@ -209,14 +229,18 @@ class SpacedRepetition(Base, TimestampMixin):
     Spaced Repetition data for individual question-user pairs.
     Implements SM-2 algorithm.
     """
-    
+
     __tablename__ = "spaced_repetition"
-    
+    __table_args__ = (
+        # Har bir user har bir savol uchun faqat 1 ta SR yozuvi
+        UniqueConstraint('user_id', 'question_id', name='uq_user_question_sr'),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
-        BigInteger, 
+        BigInteger,
         ForeignKey("users.user_id", ondelete="CASCADE"),
-        nullable=False, 
+        nullable=False,
         index=True
     )
     question_id: Mapped[int] = mapped_column(
@@ -231,7 +255,7 @@ class SpacedRepetition(Base, TimestampMixin):
     repetitions: Mapped[int] = mapped_column(Integer, default=0)  # n
     
     # Tracking
-    next_review_date: Mapped[date] = mapped_column(Date, default=date.today)
+    next_review_date: Mapped[date] = mapped_column(Date, default=utc_today)
     last_review_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     
     # Stats
@@ -274,19 +298,19 @@ class SpacedRepetition(Base, TimestampMixin):
             self.easiness_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
         )
         
-        # Set next review date
-        self.last_review_date = date.today()
-        self.next_review_date = date.today() + timedelta(days=self.interval)
+        # Set next review date (UTC)
+        self.last_review_date = utc_today()
+        self.next_review_date = utc_today() + timedelta(days=self.interval)
     
     @property
     def is_due(self) -> bool:
-        """Check if review is due"""
-        return date.today() >= self.next_review_date
-    
+        """Check if review is due (UTC)"""
+        return utc_today() >= self.next_review_date
+
     @property
     def days_until_due(self) -> int:
-        """Days until next review"""
-        return (self.next_review_date - date.today()).days
+        """Days until next review (UTC)"""
+        return (self.next_review_date - utc_today()).days
     
     @property
     def mastery_level(self) -> str:

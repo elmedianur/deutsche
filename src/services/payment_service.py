@@ -156,7 +156,7 @@ class PaymentService(LoggerMixin):
     ) -> bool:
         """
         Process pre-checkout query.
-        
+
         Returns True if payment should proceed, False otherwise.
         """
         try:
@@ -167,28 +167,55 @@ class PaymentService(LoggerMixin):
                     error_message="Invalid payment data"
                 )
                 return False
-            
+
             payment_id, user_id, plan_id = payload_parts
-            
+
+            # XAVFSIZLIK: Payload'dagi user_id haqiqiy foydalanuvchi bilan mos kelishini tekshirish
+            # Bu IDOR (Insecure Direct Object Reference) hujumini oldini oladi
+            if int(user_id) != pre_checkout.from_user.id:
+                self.logger.warning(
+                    "Payment user mismatch - potential IDOR attack",
+                    payload_user_id=user_id,
+                    actual_user_id=pre_checkout.from_user.id
+                )
+                await pre_checkout.answer(
+                    ok=False,
+                    error_message="Unauthorized payment attempt"
+                )
+                return False
+
             # Verify payment exists and is pending
             async with get_session() as session:
                 payment_repo = PaymentRepository(session)
                 payment = await payment_repo.get_by_id(int(payment_id))
-                
+
                 if not payment:
                     await pre_checkout.answer(
                         ok=False,
                         error_message="Payment not found"
                     )
                     return False
-                
+
                 if payment.status != PaymentStatus.PENDING:
                     await pre_checkout.answer(
                         ok=False,
                         error_message="Payment already processed"
                     )
                     return False
-            
+
+                # Qo'shimcha tekshirish: payment user_id ham to'g'ri kelishini tekshirish
+                if payment.user_id != pre_checkout.from_user.id:
+                    self.logger.warning(
+                        "Payment record user mismatch",
+                        payment_user_id=payment.user_id,
+                        actual_user_id=pre_checkout.from_user.id
+                    )
+                    await pre_checkout.answer(
+                        ok=False,
+                        error_message="Payment user mismatch"
+                    )
+                    return False
+
             # All good, approve
             await pre_checkout.answer(ok=True)
             return True
@@ -211,13 +238,25 @@ class PaymentService(LoggerMixin):
     ) -> Dict[str, Any]:
         """
         Process successful payment.
-        
+
         Returns result dict with subscription info.
         """
         try:
             payload_parts = payment.invoice_payload.split(":")
+            if len(payload_parts) != 3:
+                raise PaymentFailedError("Invalid payment payload format")
+
             payment_id, user_id, plan_id = payload_parts
-            
+
+            # XAVFSIZLIK: User ID validatsiyasi
+            if int(user_id) != message.from_user.id:
+                self.logger.error(
+                    "Payment user mismatch in successful payment",
+                    payload_user_id=user_id,
+                    actual_user_id=message.from_user.id
+                )
+                raise PaymentFailedError("Payment user mismatch")
+
             plan = self.get_plan(plan_id)
             if not plan:
                 raise PaymentFailedError(f"Invalid plan: {plan_id}")
