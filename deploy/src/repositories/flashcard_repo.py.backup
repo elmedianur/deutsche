@@ -1,0 +1,316 @@
+"""
+Flashcard Repository - Flashcard progress operations
+"""
+from datetime import datetime, timedelta
+from typing import Optional, List
+from sqlalchemy import select, update, and_, desc, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.database.models import (
+    FlashcardDeck, 
+    Flashcard, 
+    UserFlashcard, 
+    UserDeckProgress
+)
+from src.repositories.base import BaseRepository
+
+
+class FlashcardDeckRepository(BaseRepository):
+    """Flashcard deck repository"""
+    
+    def __init__(self, session: AsyncSession):
+        super().__init__(session, FlashcardDeck)
+    
+    async def get_by_id(self, deck_id: int) -> Optional[FlashcardDeck]:
+        """ID bo'yicha deck olish"""
+        result = await self.session.execute(
+            select(FlashcardDeck).where(FlashcardDeck.id == deck_id)
+        )
+        return result.scalar_one_or_none()
+    
+    async def get_all_active(self) -> List[FlashcardDeck]:
+        """Barcha faol decklar"""
+        result = await self.session.execute(
+            select(FlashcardDeck).where(
+                FlashcardDeck.is_active == True
+            ).order_by(FlashcardDeck.order_num.asc())
+        )
+        return list(result.scalars().all())
+    
+    async def get_by_language(self, language_id: int) -> List[FlashcardDeck]:
+        """Til bo'yicha decklar"""
+        result = await self.session.execute(
+            select(FlashcardDeck).where(
+                and_(
+                    FlashcardDeck.language_id == language_id,
+                    FlashcardDeck.is_active == True
+                )
+            ).order_by(FlashcardDeck.order_num.asc())
+        )
+        return list(result.scalars().all())
+    
+    async def get_by_level(self, level_id: int) -> List[FlashcardDeck]:
+        """Daraja bo'yicha decklar"""
+        result = await self.session.execute(
+            select(FlashcardDeck).where(
+                and_(
+                    FlashcardDeck.level_id == level_id,
+                    FlashcardDeck.is_active == True
+                )
+            ).order_by(FlashcardDeck.order_num.asc())
+        )
+        return list(result.scalars().all())
+
+
+class FlashcardRepository(BaseRepository):
+    """Flashcard repository"""
+    
+    def __init__(self, session: AsyncSession):
+        super().__init__(session, Flashcard)
+    
+    async def get_by_id(self, card_id: int) -> Optional[Flashcard]:
+        """ID bo'yicha kartochka olish"""
+        result = await self.session.execute(
+            select(Flashcard).where(Flashcard.id == card_id)
+        )
+        return result.scalar_one_or_none()
+    
+    async def get_deck_cards(
+        self, 
+        deck_id: int, 
+        limit: Optional[int] = None
+    ) -> List[Flashcard]:
+        """Deckdagi kartochkalar"""
+        query = select(Flashcard).where(
+            and_(
+                Flashcard.deck_id == deck_id,
+                Flashcard.is_active == True
+            )
+        ).order_by(Flashcard.order_num.asc())
+        
+        if limit:
+            query = query.limit(limit)
+        
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+    
+    async def count_deck_cards(self, deck_id: int) -> int:
+        """Deckdagi kartochkalar soni"""
+        result = await self.session.execute(
+            select(func.count(Flashcard.id)).where(
+                and_(
+                    Flashcard.deck_id == deck_id,
+                    Flashcard.is_active == True
+                )
+            )
+        )
+        return result.scalar() or 0
+
+
+class UserFlashcardRepository(BaseRepository):
+    """User flashcard progress repository"""
+    
+    def __init__(self, session: AsyncSession):
+        super().__init__(session, UserFlashcard)
+    
+    async def get_or_create(
+        self, 
+        user_id: int, 
+        flashcard_id: int
+    ) -> UserFlashcard:
+        """Progress olish yoki yaratish"""
+        result = await self.session.execute(
+            select(UserFlashcard).where(
+                and_(
+                    UserFlashcard.user_id == user_id,
+                    UserFlashcard.flashcard_id == flashcard_id
+                )
+            )
+        )
+        user_card = result.scalar_one_or_none()
+        
+        if not user_card:
+            user_card = UserFlashcard(
+                user_id=user_id,
+                flashcard_id=flashcard_id,
+                ease_factor=2.5,
+                interval=0,
+                repetitions=0,
+                next_review=datetime.utcnow()
+            )
+            self.session.add(user_card)
+            await self.session.commit()
+            await self.session.refresh(user_card)
+        
+        return user_card
+    
+    async def update_after_review(
+        self,
+        user_id: int,
+        flashcard_id: int,
+        quality: int  # 0-5 (0=bilmadim, 5=juda oson)
+    ) -> UserFlashcard:
+        """Spaced repetition algoritmi bilan yangilash (SM-2)"""
+        user_card = await self.get_or_create(user_id, flashcard_id)
+        
+        # SM-2 Algorithm
+        if quality < 3:
+            # Noto'g'ri javob - qaytadan boshlash
+            user_card.repetitions = 0
+            user_card.interval = 0
+            user_card.next_review = datetime.utcnow()
+        else:
+            # To'g'ri javob
+            if user_card.repetitions == 0:
+                user_card.interval = 1
+            elif user_card.repetitions == 1:
+                user_card.interval = 6
+            else:
+                user_card.interval = int(user_card.interval * user_card.ease_factor)
+            
+            user_card.repetitions += 1
+            user_card.next_review = datetime.utcnow() + timedelta(days=user_card.interval)
+        
+        # Ease factor yangilash
+        user_card.ease_factor = max(
+            1.3,
+            user_card.ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+        )
+        
+        user_card.last_reviewed = datetime.utcnow()
+        user_card.total_reviews += 1
+        
+        if quality >= 3:
+            user_card.correct_reviews += 1
+        
+        await self.session.commit()
+        await self.session.refresh(user_card)
+        return user_card
+    
+    async def get_due_cards(
+        self,
+        user_id: int,
+        deck_id: Optional[int] = None,
+        limit: int = 20
+    ) -> List[UserFlashcard]:
+        """Takrorlash kerak bo'lgan kartochkalar"""
+        query = select(UserFlashcard).where(
+            and_(
+                UserFlashcard.user_id == user_id,
+                UserFlashcard.next_review <= datetime.utcnow()
+            )
+        )
+        
+        if deck_id:
+            query = query.join(Flashcard).where(Flashcard.deck_id == deck_id)
+        
+        query = query.order_by(UserFlashcard.next_review.asc()).limit(limit)
+        
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+    
+    async def get_user_card_stats(
+        self,
+        user_id: int,
+        deck_id: Optional[int] = None
+    ) -> dict:
+        """Foydalanuvchi statistikasi"""
+        query = select(UserFlashcard).where(UserFlashcard.user_id == user_id)
+        
+        if deck_id:
+            query = query.join(Flashcard).where(Flashcard.deck_id == deck_id)
+        
+        result = await self.session.execute(query)
+        cards = list(result.scalars().all())
+        
+        total = len(cards)
+        learned = sum(1 for c in cards if c.repetitions >= 3)
+        learning = sum(1 for c in cards if 0 < c.repetitions < 3)
+        due = sum(1 for c in cards if c.next_review <= datetime.utcnow())
+        
+        total_reviews = sum(c.total_reviews for c in cards)
+        correct_reviews = sum(c.correct_reviews for c in cards)
+        
+        return {
+            "total_cards": total,
+            "learned": learned,
+            "learning": learning,
+            "new": total - learned - learning,
+            "due_today": due,
+            "total_reviews": total_reviews,
+            "accuracy": (correct_reviews / total_reviews * 100) if total_reviews > 0 else 0
+        }
+
+
+class UserDeckProgressRepository(BaseRepository):
+    """User deck progress repository"""
+    
+    def __init__(self, session: AsyncSession):
+        super().__init__(session, UserDeckProgress)
+    
+    async def get_or_create(
+        self,
+        user_id: int,
+        deck_id: int
+    ) -> UserDeckProgress:
+        """Progress olish yoki yaratish"""
+        result = await self.session.execute(
+            select(UserDeckProgress).where(
+                and_(
+                    UserDeckProgress.user_id == user_id,
+                    UserDeckProgress.deck_id == deck_id
+                )
+            )
+        )
+        progress = result.scalar_one_or_none()
+        
+        if not progress:
+            progress = UserDeckProgress(
+                user_id=user_id,
+                deck_id=deck_id
+            )
+            self.session.add(progress)
+            await self.session.commit()
+            await self.session.refresh(progress)
+        
+        return progress
+    
+    async def update_progress(
+        self,
+        user_id: int,
+        deck_id: int,
+        cards_studied: int,
+        correct: int
+    ) -> UserDeckProgress:
+        """Progressni yangilash"""
+        progress = await self.get_or_create(user_id, deck_id)
+        
+        progress.cards_studied += cards_studied
+        progress.total_reviews += cards_studied
+        progress.correct_reviews += correct
+        progress.last_studied = datetime.utcnow()
+        
+        # Streak yangilash
+        today = datetime.utcnow().date()
+        if progress.last_studied_date != today:
+            if progress.last_studied_date == today - timedelta(days=1):
+                progress.current_streak += 1
+            else:
+                progress.current_streak = 1
+            progress.last_studied_date = today
+            
+            if progress.current_streak > progress.longest_streak:
+                progress.longest_streak = progress.current_streak
+        
+        await self.session.commit()
+        await self.session.refresh(progress)
+        return progress
+    
+    async def get_user_all_progress(self, user_id: int) -> List[UserDeckProgress]:
+        """Foydalanuvchining barcha deck progresslari"""
+        result = await self.session.execute(
+            select(UserDeckProgress).where(
+                UserDeckProgress.user_id == user_id
+            ).order_by(desc(UserDeckProgress.last_studied))
+        )
+        return list(result.scalars().all())

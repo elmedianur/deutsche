@@ -1,0 +1,841 @@
+"""
+Admin Panel Handler - To'liq boshqaruv tizimi
+"""
+from datetime import datetime, timedelta
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+from src.database import get_session
+from src.database.models import User, Language, Level, Day, Question
+from src.repositories import (
+    UserRepository, QuestionRepository,
+    LanguageRepository, LevelRepository, DayRepository
+)
+from src.core.logging import get_logger
+from src.config import settings
+
+logger = get_logger(__name__)
+router = Router(name="admin")
+
+
+class AdminStates(StatesGroup):
+    """Admin FSM states"""
+    waiting_broadcast = State()
+    waiting_user_id = State()
+    waiting_premium_days = State()
+    # Content Management
+    waiting_language_name = State()
+    waiting_language_flag = State()
+    waiting_level_name = State()
+    waiting_day_number = State()
+    waiting_day_topic = State()
+    waiting_question_text = State()
+    waiting_question_options = State()
+    waiting_question_correct = State()
+    waiting_question_explanation = State()
+
+
+def is_super_admin(user_id: int) -> bool:
+    """Check if user is super admin"""
+    return user_id in settings.SUPER_ADMIN_IDS
+
+
+def is_admin(user_id: int) -> bool:
+    """Check if user is admin or super admin"""
+    return user_id in settings.ADMIN_IDS or is_super_admin(user_id)
+
+
+def admin_menu_keyboard(is_super: bool = False) -> InlineKeyboardMarkup:
+    """Admin panel keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(InlineKeyboardButton(text="📊 Statistika", callback_data="admin:stats"))
+    builder.row(
+        InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="admin:users"),
+        InlineKeyboardButton(text="📢 Broadcast", callback_data="admin:broadcast")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📚 Tillar", callback_data="admin:languages"),
+        InlineKeyboardButton(text="❓ Savollar", callback_data="admin:questions")
+    )
+    builder.row(
+        InlineKeyboardButton(text="💰 To'lovlar", callback_data="admin:payments"),
+        InlineKeyboardButton(text="🎁 Promo kodlar", callback_data="admin:promos")
+    )
+    
+    if is_super:
+        builder.row(
+            InlineKeyboardButton(text="👑 Admin boshqaruvi", callback_data="admin:manage_admins"),
+            InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="admin:settings")
+        )
+    
+    return builder.as_markup()
+
+
+def content_menu_keyboard() -> InlineKeyboardMarkup:
+    """Content management keyboard"""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🌍 Til qo'shish", callback_data="admin:add_language"))
+    builder.row(InlineKeyboardButton(text="📊 Daraja qo'shish", callback_data="admin:add_level"))
+    builder.row(InlineKeyboardButton(text="📅 Kun qo'shish", callback_data="admin:add_day"))
+    builder.row(InlineKeyboardButton(text="❓ Savol qo'shish", callback_data="admin:add_question"))
+    builder.row(InlineKeyboardButton(text="📥 Excel'dan import", callback_data="admin:import_excel"))
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:panel"))
+    return builder.as_markup()
+
+
+# ============================================================
+# ADMIN PANEL ENTRY
+# ============================================================
+
+@router.message(Command("admin"))
+async def admin_panel_cmd(message: Message):
+    """Admin panel command"""
+    user_id = message.from_user.id
+    
+    if not is_admin(user_id):
+        await message.answer("❌ Sizda admin huquqi yo'q!")
+        return
+    
+    await show_admin_panel(message, is_super_admin(user_id))
+
+
+@router.callback_query(F.data == "admin:panel")
+async def admin_panel_callback(callback: CallbackQuery):
+    """Admin panel callback"""
+    user_id = callback.from_user.id
+    
+    if not is_admin(user_id):
+        await callback.answer("❌ Sizda admin huquqi yo'q!", show_alert=True)
+        return
+    
+    await show_admin_panel(callback.message, is_super_admin(user_id), edit=True)
+    await callback.answer()
+
+
+async def show_admin_panel(message: Message, is_super: bool, edit: bool = False):
+    """Show admin panel"""
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        question_repo = QuestionRepository(session)
+        
+        total_users = await user_repo.count_all()
+        premium_users = await user_repo.count_premium()
+        total_questions = await question_repo.count()
+    
+    role = "👑 Super Admin" if is_super else "🔧 Admin"
+    
+    text = f"""
+{role} <b>Panel</b>
+
+📊 <b>Qisqa statistika:</b>
+• Foydalanuvchilar: {total_users}
+• Premium: {premium_users}
+• Savollar: {total_questions}
+
+Boshqarish uchun quyidagi tugmalarni tanlang:
+"""
+    
+    if edit:
+        await message.edit_text(text, reply_markup=admin_menu_keyboard(is_super))
+    else:
+        await message.answer(text, reply_markup=admin_menu_keyboard(is_super))
+
+
+# ============================================================
+# STATISTICS
+# ============================================================
+
+@router.callback_query(F.data == "admin:stats")
+async def admin_stats(callback: CallbackQuery):
+    """Detailed statistics"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Ruxsat yo'q!", show_alert=True)
+        return
+    
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        question_repo = QuestionRepository(session)
+        lang_repo = LanguageRepository(session)
+        
+        total_users = await user_repo.count_all()
+        premium_users = await user_repo.count_premium()
+        today_users = await user_repo.count_today()
+        week_users = await user_repo.count_week()
+        total_questions = await question_repo.count()
+        languages = await lang_repo.get_active_languages()
+    
+    text = f"""
+📊 <b>Batafsil statistika</b>
+
+<b>👥 Foydalanuvchilar:</b>
+• Jami: {total_users}
+• Premium: {premium_users} ({premium_users/total_users*100:.1f}% konversiya)
+• Bugun qo'shilgan: {today_users}
+• Bu hafta: {week_users}
+
+<b>📚 Kontent:</b>
+• Savollar: {total_questions}
+• Tillar: {len(languages)}
+
+<b>🌍 Tillar bo'yicha:</b>
+"""
+    
+    for lang in languages:
+        text += f"• {lang.flag} {lang.name}\n"
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="📈 Grafik", callback_data="admin:stats_chart"))
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:panel"))
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+# ============================================================
+# USER MANAGEMENT
+# ============================================================
+
+@router.callback_query(F.data == "admin:users")
+async def user_management(callback: CallbackQuery):
+    """User management menu"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Ruxsat yo'q!", show_alert=True)
+        return
+    
+    text = """
+👥 <b>Foydalanuvchilar boshqaruvi</b>
+
+Buyruqlar:
+• /user [id] - Foydalanuvchi ma'lumoti
+• /grant [id] [days] - Premium berish
+• /block [id] - Bloklash
+• /unblock [id] - Blokdan chiqarish
+• /search [username] - Qidirish
+"""
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🔍 Qidirish", callback_data="admin:search_user"))
+    builder.row(InlineKeyboardButton(text="👑 Premium berish", callback_data="admin:grant_premium"))
+    builder.row(InlineKeyboardButton(text="🚫 Bloklash", callback_data="admin:block_user"))
+    builder.row(InlineKeyboardButton(text="📋 Oxirgi ro'yxat", callback_data="admin:recent_users"))
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:panel"))
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:recent_users")
+async def recent_users(callback: CallbackQuery):
+    """Show recent users"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        users = await user_repo.get_recent(limit=15)
+    
+    text = "👥 <b>Oxirgi foydalanuvchilar</b>\n\n"
+    
+    for user in users:
+        premium = "⭐" if user.is_premium else ""
+        text += f"• {user.full_name} (@{user.username or 'N/A'}) {premium}\n"
+        text += f"  ID: <code>{user.user_id}</code>\n"
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:users"))
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.message(Command("grant"))
+async def grant_premium_cmd(message: Message):
+    """Grant premium command"""
+    if not is_super_admin(message.from_user.id):
+        await message.answer("❌ Faqat Super Admin!")
+        return
+    
+    args = message.text.split()[1:]
+    
+    if len(args) < 2:
+        await message.answer("❌ Format: /grant [user_id] [days]\nMasalan: /grant 123456789 30")
+        return
+    
+    try:
+        user_id = int(args[0])
+        days = int(args[1])
+    except ValueError:
+        await message.answer("❌ Noto'g'ri format!")
+        return
+    
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(user_id)
+        
+        if not user:
+            await message.answer("❌ Foydalanuvchi topilmadi!")
+            return
+        
+        user.is_premium = True
+        user.premium_until = datetime.utcnow() + timedelta(days=days)
+        await session.commit()
+    
+    await message.answer(f"✅ {user.full_name} ga {days} kun Premium berildi!")
+
+
+@router.message(Command("block"))
+async def block_user_cmd(message: Message):
+    """Block user command"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    args = message.text.split()[1:]
+    
+    if not args:
+        await message.answer("❌ Format: /block [user_id]")
+        return
+    
+    try:
+        user_id = int(args[0])
+    except ValueError:
+        await message.answer("❌ Noto'g'ri user_id!")
+        return
+    
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(user_id)
+        
+        if not user:
+            await message.answer("❌ Foydalanuvchi topilmadi!")
+            return
+        
+        user.is_blocked = True
+        await session.commit()
+    
+    await message.answer(f"🚫 {user.full_name} bloklandi!")
+
+
+# ============================================================
+# CONTENT MANAGEMENT (QUESTIONS)
+# ============================================================
+
+@router.callback_query(F.data == "admin:questions")
+async def questions_menu(callback: CallbackQuery):
+    """Questions management menu"""
+    print("=== QUESTIONS HANDLER CALLED ===")
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Ruxsat yo'q!", show_alert=True)
+        return
+    
+    async with get_session() as session:
+        question_repo = QuestionRepository(session)
+        lang_repo = LanguageRepository(session)
+        
+        total = await question_repo.count()
+        languages = await lang_repo.get_active_languages()
+    
+    text = f"""
+❓ <b>Savollar boshqaruvi</b>
+
+📊 Jami savollar: {total}
+
+<b>Tillar bo'yicha:</b>
+"""
+    
+    for lang in languages:
+        text += f"• {lang.flag} {lang.name}\n"
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="➕ Savol qo'shish", callback_data="admin:add_question"))
+    builder.row(InlineKeyboardButton(text="📥 Excel import", callback_data="admin:import_excel"))
+    builder.row(InlineKeyboardButton(text="📋 Savollar ro'yxati", callback_data="admin:list_questions"))
+    builder.row(InlineKeyboardButton(text="🗑 Savol o'chirish", callback_data="admin:delete_question"))
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:panel"))
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:add_question")
+async def start_add_question(callback: CallbackQuery, state: FSMContext):
+    """Start adding question"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    # Get languages for selection
+    async with get_session() as session:
+        lang_repo = LanguageRepository(session)
+        languages = await lang_repo.get_active_languages()
+    
+    if not languages:
+        await callback.answer("❌ Avval til qo'shing!", show_alert=True)
+        return
+    
+    builder = InlineKeyboardBuilder()
+    for lang in languages:
+        builder.row(InlineKeyboardButton(
+            text=f"{lang.flag} {lang.name}",
+            callback_data=f"admin:q_lang:{lang.id}"
+        ))
+    builder.row(InlineKeyboardButton(text="❌ Bekor", callback_data="admin:questions"))
+    
+    await callback.message.edit_text(
+        "❓ <b>Savol qo'shish</b>\n\n"
+        "1️⃣ Tilni tanlang:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:q_lang:"))
+async def select_question_language(callback: CallbackQuery, state: FSMContext):
+    """Select language for question"""
+    lang_id = int(callback.data.split(":")[-1])
+    await state.update_data(question_lang_id=lang_id)
+    
+    # Get levels
+    async with get_session() as session:
+        level_repo = LevelRepository(session)
+        levels = await level_repo.get_by_language(lang_id)
+    
+    if not levels:
+        await callback.answer("❌ Bu til uchun daraja yo'q!", show_alert=True)
+        return
+    
+    builder = InlineKeyboardBuilder()
+    for level in levels:
+        builder.row(InlineKeyboardButton(
+            text=f"📊 {level.name}",
+            callback_data=f"admin:q_level:{level.id}"
+        ))
+    builder.row(InlineKeyboardButton(text="❌ Bekor", callback_data="admin:questions"))
+    
+    await callback.message.edit_text(
+        "❓ <b>Savol qo'shish</b>\n\n"
+        "2️⃣ Darajani tanlang:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:q_level:"))
+async def select_question_level(callback: CallbackQuery, state: FSMContext):
+    """Select level for question"""
+    level_id = int(callback.data.split(":")[-1])
+    await state.update_data(question_level_id=level_id)
+    
+    # Get days
+    async with get_session() as session:
+        day_repo = DayRepository(session)
+        days = await day_repo.get_by_level(level_id)
+    
+    if not days:
+        await callback.answer("❌ Bu daraja uchun kun yo'q!", show_alert=True)
+        return
+    
+    builder = InlineKeyboardBuilder()
+    for day in days:
+        builder.row(InlineKeyboardButton(
+            text=f"📅 Kun {day.day_number}: {day.topic}",
+            callback_data=f"admin:q_day:{day.id}"
+        ))
+    builder.row(InlineKeyboardButton(text="❌ Bekor", callback_data="admin:questions"))
+    
+    await callback.message.edit_text(
+        "❓ <b>Savol qo'shish</b>\n\n"
+        "3️⃣ Kunni tanlang:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:q_day:"))
+async def select_question_day(callback: CallbackQuery, state: FSMContext):
+    """Select day and start question input"""
+    day_id = int(callback.data.split(":")[-1])
+    await state.update_data(question_day_id=day_id)
+    await state.set_state(AdminStates.waiting_question_text)
+    
+    await callback.message.edit_text(
+        "❓ <b>Savol qo'shish</b>\n\n"
+        "4️⃣ Savol matnini yozing:\n\n"
+        "<i>Masalan: \"Guten Morgen\" qanday tarjima qilinadi?</i>"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_question_text)
+async def receive_question_text(message: Message, state: FSMContext):
+    """Receive question text"""
+    await state.update_data(question_text=message.text)
+    await state.set_state(AdminStates.waiting_question_options)
+    
+    await message.answer(
+        "❓ <b>Savol qo'shish</b>\n\n"
+        "5️⃣ Variantlarni yozing (har birini yangi qatordan):\n\n"
+        "<i>Masalan:\n"
+        "Xayrli tong\n"
+        "Xayrli kech\n"
+        "Salom\n"
+        "Xayr</i>"
+    )
+
+
+@router.message(AdminStates.waiting_question_options)
+async def receive_question_options(message: Message, state: FSMContext):
+    """Receive question options"""
+    options = [opt.strip() for opt in message.text.split("\n") if opt.strip()]
+    
+    if len(options) < 2:
+        await message.answer("❌ Kamida 2 ta variant bo'lishi kerak!")
+        return
+    
+    if len(options) > 6:
+        await message.answer("❌ Maksimum 6 ta variant!")
+        return
+    
+    await state.update_data(question_options=options)
+    await state.set_state(AdminStates.waiting_question_correct)
+    
+    text = "❓ <b>Savol qo'shish</b>\n\n6️⃣ To'g'ri javob raqamini yozing:\n\n"
+    for i, opt in enumerate(options, 1):
+        text += f"{i}. {opt}\n"
+    
+    await message.answer(text)
+
+
+@router.message(AdminStates.waiting_question_correct)
+async def receive_question_correct(message: Message, state: FSMContext):
+    """Receive correct answer index"""
+    data = await state.get_data()
+    options = data.get("question_options", [])
+    
+    try:
+        correct_idx = int(message.text) - 1
+        if correct_idx < 0 or correct_idx >= len(options):
+            raise ValueError()
+    except ValueError:
+        await message.answer(f"❌ 1 dan {len(options)} gacha raqam kiriting!")
+        return
+    
+    await state.update_data(question_correct=correct_idx)
+    await state.set_state(AdminStates.waiting_question_explanation)
+    
+    await message.answer(
+        "❓ <b>Savol qo'shish</b>\n\n"
+        "7️⃣ Tushuntirish yozing (ixtiyoriy):\n\n"
+        "<i>Masalan: \"Guten Morgen\" - nemischa \"Xayrli tong\" degani.</i>\n\n"
+        "O'tkazib yuborish uchun: /skip"
+    )
+
+
+@router.message(AdminStates.waiting_question_explanation)
+async def receive_question_explanation(message: Message, state: FSMContext):
+    """Receive explanation and save question"""
+    data = await state.get_data()
+    
+    explanation = None if message.text == "/skip" else message.text
+    
+    # Save question
+    async with get_session() as session:
+        question = Question(
+            day_id=data["question_day_id"],
+            question_text=data["question_text"],
+            correct_answer=data["question_options"][data["question_correct"]],
+            wrong_answers=data["question_options"],  # Will be filtered
+            explanation=explanation,
+            is_active=True
+        )
+        
+        # Set correct wrong_answers (excluding correct one)
+        all_options = data["question_options"]
+        correct_idx = data["question_correct"]
+        question.wrong_answers = [opt for i, opt in enumerate(all_options) if i != correct_idx]
+        
+        session.add(question)
+        await session.commit()
+    
+    await state.clear()
+    
+    await message.answer(
+        "✅ <b>Savol qo'shildi!</b>\n\n"
+        f"📝 {data['question_text']}\n"
+        f"✓ To'g'ri: {data['question_options'][data['question_correct']]}\n\n"
+        "Yana savol qo'shish: /admin"
+    )
+
+
+# ============================================================
+# LANGUAGE MANAGEMENT
+# ============================================================
+
+@router.callback_query(F.data == "admin:languages")
+async def languages_menu(callback: CallbackQuery):
+    """Languages management"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    async with get_session() as session:
+        lang_repo = LanguageRepository(session)
+        languages = await lang_repo.get_active_languages()
+    
+    text = "🌍 <b>Tillar boshqaruvi</b>\n\n"
+    
+    if languages:
+        for lang in languages:
+            text += f"• {lang.flag} {lang.name} (ID: {lang.id})\n"
+    else:
+        text += "<i>Tillar yo'q</i>\n"
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="➕ Til qo'shish", callback_data="admin:add_language"))
+    builder.row(InlineKeyboardButton(text="📊 Daraja qo'shish", callback_data="admin:add_level"))
+    builder.row(InlineKeyboardButton(text="📅 Kun qo'shish", callback_data="admin:add_day"))
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:panel"))
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:add_language")
+async def start_add_language(callback: CallbackQuery, state: FSMContext):
+    """Start adding language"""
+    if not is_super_admin(callback.from_user.id):
+        await callback.answer("❌ Faqat Super Admin!", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.waiting_language_name)
+    
+    await callback.message.edit_text(
+        "🌍 <b>Til qo'shish</b>\n\n"
+        "Til nomini yozing:\n"
+        "<i>Masalan: Nemis tili</i>"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_language_name)
+async def receive_language_name(message: Message, state: FSMContext):
+    """Receive language name"""
+    await state.update_data(lang_name=message.text)
+    await state.set_state(AdminStates.waiting_language_flag)
+    
+    await message.answer(
+        "🌍 <b>Til qo'shish</b>\n\n"
+        "Bayroq emoji yuboring:\n"
+        "<i>Masalan: 🇩🇪</i>"
+    )
+
+
+@router.message(AdminStates.waiting_language_flag)
+async def receive_language_flag(message: Message, state: FSMContext):
+    """Receive language flag and save"""
+    data = await state.get_data()
+    
+    async with get_session() as session:
+        lang = Language(
+            name=data["lang_name"],
+            code=data["lang_name"][:2].lower(),
+            flag=message.text,
+            is_active=True
+        )
+        session.add(lang)
+        await session.commit()
+    
+    await state.clear()
+    await message.answer(f"✅ Til qo'shildi: {message.text} {data['lang_name']}")
+
+
+# ============================================================
+# BROADCAST
+# ============================================================
+
+@router.callback_query(F.data == "admin:broadcast")
+async def broadcast_menu(callback: CallbackQuery, state: FSMContext):
+    """Start broadcast"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await state.set_state(AdminStates.waiting_broadcast)
+    
+    await callback.message.edit_text(
+        "📢 <b>Broadcast</b>\n\n"
+        "Barcha foydalanuvchilarga yuboriladigan xabarni yozing.\n\n"
+        "Rasm yuborish uchun rasm + caption yuboring.\n\n"
+        "Bekor qilish: /cancel"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_broadcast)
+async def process_broadcast(message: Message, state: FSMContext, bot: Bot):
+    """Process broadcast"""
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi")
+        return
+    
+    await state.clear()
+    
+    broadcast_text = message.text or message.caption or ""
+    
+    status_msg = await message.answer("📤 Yuborilmoqda... 0%")
+    
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        users = await user_repo.get_all_active(limit=50000)
+    
+    total = len(users)
+    success = 0
+    failed = 0
+    
+    for i, user in enumerate(users):
+        try:
+            if message.photo:
+                await bot.send_photo(user.user_id, message.photo[-1].file_id, caption=broadcast_text)
+            else:
+                await bot.send_message(user.user_id, broadcast_text)
+            success += 1
+        except:
+            failed += 1
+        
+        if i % 100 == 0:
+            progress = int((i / total) * 100)
+            try:
+                await status_msg.edit_text(f"📤 Yuborilmoqda... {progress}%")
+            except:
+                pass
+    
+    await status_msg.edit_text(
+        f"✅ <b>Broadcast tugadi!</b>\n\n"
+        f"📤 Yuborildi: {success}\n"
+        f"❌ Xatolik: {failed}"
+    )
+
+
+# ============================================================
+# PAYMENTS & PROMOS
+# ============================================================
+
+@router.callback_query(F.data == "admin:payments")
+async def payments_menu(callback: CallbackQuery):
+    """Payments overview"""
+    if not is_super_admin(callback.from_user.id):
+        await callback.answer("❌ Faqat Super Admin!", show_alert=True)
+        return
+    
+    text = """
+💰 <b>To'lovlar</b>
+
+📊 Statistika tez orada qo'shiladi.
+
+<b>Buyruqlar:</b>
+• /grant [id] [days] - Premium berish
+• /refund [payment_id] - Qaytarish
+"""
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:panel"))
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:promos")
+async def promos_menu(callback: CallbackQuery):
+    """Promo codes menu"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    text = """
+🎁 <b>Promo kodlar</b>
+
+<b>Buyruqlar:</b>
+• /addpromo [code] [days] [limit] - Yangi kod
+• /delpromo [code] - O'chirish
+• /promos - Ro'yxat
+
+<i>Masalan: /addpromo SALE2024 7 100</i>
+"""
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:panel"))
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+# ============================================================
+# ADMIN MANAGEMENT (SUPER ADMIN ONLY)
+# ============================================================
+
+@router.callback_query(F.data == "admin:manage_admins")
+async def manage_admins(callback: CallbackQuery):
+    """Manage admins (super admin only)"""
+    if not is_super_admin(callback.from_user.id):
+        await callback.answer("❌ Faqat Super Admin!", show_alert=True)
+        return
+    
+    admin_ids = settings.ADMIN_IDS
+    super_ids = settings.SUPER_ADMIN_IDS
+    
+    text = "👑 <b>Admin boshqaruvi</b>\n\n"
+    text += "<b>Super Adminlar:</b>\n"
+    for uid in super_ids:
+        text += f"• <code>{uid}</code>\n"
+    
+    text += "\n<b>Adminlar:</b>\n"
+    for uid in admin_ids:
+        if uid not in super_ids:
+            text += f"• <code>{uid}</code>\n"
+    
+    text += "\n<i>Admin qo'shish uchun .env faylini o'zgartiring</i>"
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:panel"))
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+# ============================================================
+# EXCEL IMPORT
+# ============================================================
+
+@router.callback_query(F.data == "admin:import_excel")
+async def import_excel_menu(callback: CallbackQuery):
+    """Excel import instructions"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    text = """
+📥 <b>Excel'dan import</b>
+
+Excel faylni quyidagi formatda tayyorlang:
+
+<b>Ustunlar:</b>
+1. question - Savol matni
+2. correct - To'g'ri javob
+3. wrong1 - Xato variant 1
+4. wrong2 - Xato variant 2
+5. wrong3 - Xato variant 3
+6. explanation - Tushuntirish (ixtiyoriy)
+
+Keyin faylni yuboring va /import [day_id] buyrug'ini yozing.
+
+<i>Masalan: /import 1</i>
+"""
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="📄 Namuna yuklab olish", callback_data="admin:download_template"))
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:questions"))
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+nano src/handlers/admin/panel.py

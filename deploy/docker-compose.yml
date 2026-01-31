@@ -1,0 +1,146 @@
+# Quiz Bot Pro - Docker Compose
+# Development and Production setup
+
+version: '3.8'
+
+services:
+  # ============================================================
+  # BOT SERVICE
+  # ============================================================
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quiz_bot_pro
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Bot settings
+      BOT_TOKEN: ${BOT_TOKEN}
+      BOT_USERNAME: ${BOT_USERNAME:-quiz_bot}
+      
+      # Database
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-quiz_secret}@postgres:5432/quiz_bot
+      DATABASE_ECHO: ${DATABASE_ECHO:-false}
+      
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      
+      # Admin
+      SUPER_ADMIN_IDS: ${SUPER_ADMIN_IDS}
+      ADMIN_IDS: ${ADMIN_IDS:-}
+      
+      # Premium
+      STARS_ENABLED: ${STARS_ENABLED:-true}
+      PREMIUM_MONTHLY_STARS: ${PREMIUM_MONTHLY_STARS:-100}
+      PREMIUM_YEARLY_STARS: ${PREMIUM_YEARLY_STARS:-1000}
+      
+      # Audio
+      AUDIO_ENABLED: ${AUDIO_ENABLED:-true}
+      AUDIO_PROVIDER: ${AUDIO_PROVIDER:-gtts}
+      
+      # Rate limiting
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      
+      # Webhook (optional)
+      WEBHOOK_ENABLED: ${WEBHOOK_ENABLED:-false}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      WEBHOOK_HOST: 0.0.0.0
+      WEBHOOK_PORT: 8080
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
+    volumes:
+      - bot_logs:/app/logs
+      - audio_cache:/app/audio/cache
+    networks:
+      - quiz_network
+    # For webhook mode:
+    # ports:
+    #   - "8080:8080"
+
+  # ============================================================
+  # DATABASE
+  # ============================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: quiz_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: quiz_bot
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quiz_secret}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d quiz_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - quiz_network
+
+  # ============================================================
+  # REDIS
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: quiz_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - quiz_network
+
+  # ============================================================
+  # MIGRATIONS (run once)
+  # ============================================================
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quiz_migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-quiz_secret}@postgres:5432/quiz_bot
+    command: ["python", "-c", "import asyncio; from src.database import init_database; asyncio.run(init_database())"]
+    networks:
+      - quiz_network
+    profiles:
+      - setup
+
+# ============================================================
+# VOLUMES
+# ============================================================
+volumes:
+  postgres_data:
+    name: quiz_postgres_data
+  redis_data:
+    name: quiz_redis_data
+  bot_logs:
+    name: quiz_bot_logs
+  audio_cache:
+    name: quiz_audio_cache
+
+# ============================================================
+# NETWORKS
+# ============================================================
+networks:
+  quiz_network:
+    name: quiz_network
+    driver: bridge
