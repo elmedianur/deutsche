@@ -1,0 +1,31 @@
+word,translation,gender,part_of_speech,example_de,example_uz,level_id,difficulty
+der Hund,it,der,noun,Der Hund bellt laut.,It baland ovozda huradi.,1,1
+die Katze,mushuk,die,noun,Die Katze schläft gern.,Mushuk uxlashni yaxshi ko'radi.,1,1
+das Haus,uy,das,noun,Das Haus ist sehr groß.,Uy juda katta.,1,1
+der Apfel,olma,der,noun,Der Apfel ist rot.,Olma qizil.,1,1
+die Milch,sut,die,noun,Die Milch ist frisch.,Sut yangi.,1,1
+das Brot,non,das,noun,Das Brot schmeckt gut.,Non mazali.,1,1
+gehen,bormoq,-,verb,Ich gehe zur Schule.,Men maktabga ketyapman.,1,2
+kommen,kelmoq,-,verb,Er kommt aus Berlin.,U Berlindan kelgan.,1,2
+essen,yemoq,-,verb,Wir essen zusammen.,Biz birga ovqatlanamiz.,1,2
+trinken,ichmoq,-,verb,Sie trinkt Wasser.,U suv ichyapti.,1,2
+schlafen,uxlamoq,-,verb,Das Kind schläft.,Bola uxlayapti.,1,2
+arbeiten,ishlamoq,-,verb,Ich arbeite jeden Tag.,Men har kuni ishlayman.,1,2
+schnell,tez,-,adjective,Das Auto fährt schnell.,Mashina tez yuryapti.,2,2
+langsam,sekin,-,adjective,Die Schnecke ist langsam.,Shilliq qurt sekin.,2,1
+groß,katta,-,adjective,Der Elefant ist groß.,Fil katta.,1,1
+klein,kichik,-,adjective,Die Maus ist klein.,Sichqon kichik.,1,1
+gut,yaxshi,-,adjective,Das Essen ist gut.,Ovqat yaxshi.,1,1
+schlecht,yomon,-,adjective,Das Wetter ist schlecht.,Ob-havo yomon.,1,2
+heute,bugun,-,adverb,Heute ist Montag.,Bugun dushanba.,1,1
+morgen,ertaga,-,adverb,Morgen gehe ich einkaufen.,Ertaga xarid qilaman.,1,1
+gestern,kecha,-,adverb,Gestern war Sonntag.,Kecha yakshanba edi.,1,2
+immer,doim,-,adverb,Er ist immer pünktlich.,U doim vaqtida.,2,2
+Guten Morgen!,Xayrli tong!,-,phrase,Guten Morgen! Wie geht es?,Xayrli tong! Qalaysiz?,1,1
+Guten Tag!,Assalomu alaykum!,-,phrase,Guten Tag! Ich bin Anna.,Assalomu alaykum! Men Annaman.,1,1
+Auf Wiedersehen!,Xayr!,-,phrase,Auf Wiedersehen! Bis morgen!,Xayr! Ertagacha!,1,1
+Danke schön!,Rahmat!,-,phrase,Danke schön für die Hilfe!,Yordam uchun rahmat!,1,1
+Bitte schön!,Marhamat!,-,phrase,Bitte schön! Gern geschehen.,Marhamat! Arzimaydi.,1,1
+Wie heißt du?,Ismingiz nima?,-,phrase,Wie heißt du? Ich bin Max.,Ismingiz nima? Men Maksim.,1,1
+Woher kommst du?,Qayerdansan?,-,phrase,Woher kommst du? Aus Berlin.,Qayerdansan? Berlindan.,1,1
+Ich verstehe nicht.,Tushunmadim.,-,phrase,Ich verstehe nicht. Bitte langsamer!,Tushunmadim. Sekinroq!,1,2

@@ -9,6 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base, TimestampMixin, ActiveMixin
 
+if TYPE_CHECKING:
+    from .vocabulary import Vocabulary
+
 
 class FlashcardDeck(Base, TimestampMixin, ActiveMixin):
     """Flashcard deck - collection of cards"""
@@ -73,7 +76,14 @@ class Flashcard(Base, TimestampMixin, ActiveMixin):
         nullable=False,
         index=True
     )
-    
+
+    # Reference to unified vocabulary (optional - for migration)
+    vocabulary_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("vocabulary.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
     # Front side (question/word)
     front_text: Mapped[str] = mapped_column(Text, nullable=False)
     front_audio_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -106,6 +116,11 @@ class Flashcard(Base, TimestampMixin, ActiveMixin):
     user_cards: Mapped[list["UserFlashcard"]] = relationship(
         "UserFlashcard",
         back_populates="card",
+        lazy="selectin"
+    )
+    vocabulary: Mapped[Optional["Vocabulary"]] = relationship(
+        "Vocabulary",
+        foreign_keys=[vocabulary_id],
         lazy="selectin"
     )
     

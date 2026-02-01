@@ -9,6 +9,7 @@ from src.database.base import Base, TimestampMixin, ActiveMixin
 
 if TYPE_CHECKING:
     from .language import Day
+    from .vocabulary import Vocabulary
 
 
 class Question(Base, TimestampMixin, ActiveMixin):
@@ -22,7 +23,14 @@ class Question(Base, TimestampMixin, ActiveMixin):
         nullable=False,
         index=True
     )
-    
+
+    # Reference to unified vocabulary (optional - for migration)
+    vocabulary_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("vocabulary.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
     # Question content
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     
@@ -67,6 +75,11 @@ class Question(Base, TimestampMixin, ActiveMixin):
     votes: Mapped[list["QuestionVote"]] = relationship(
         "QuestionVote",
         back_populates="question",
+        lazy="selectin"
+    )
+    vocabulary: Mapped[Optional["Vocabulary"]] = relationship(
+        "Vocabulary",
+        foreign_keys=[vocabulary_id],
         lazy="selectin"
     )
     
