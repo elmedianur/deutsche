@@ -729,7 +729,7 @@ async def save_quiz_to_db(user_id, correct, wrong, total, percentage, time_taken
             # Yutuqlarni tekshirish - jami quizlar sonini olish
             from src.services import achievement_service
             user = await user_repo.get_by_user_id(user_id)
-            total_quizzes = user.quizzes_count if user else 1
+            total_quizzes = user.total_quizzes if user else 1
             is_perfect = (percentage == 100)
             await achievement_service.on_quiz_completed(user_id, total_quizzes, is_perfect)
     except Exception as e:

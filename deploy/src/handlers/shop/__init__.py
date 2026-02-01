@@ -669,42 +669,80 @@ def get_shop_header() -> str:
 """
 
 
-def shop_menu_keyboard() -> InlineKeyboardMarkup:
-    """Asosiy market menyusi"""
+async def shop_menu_keyboard() -> InlineKeyboardMarkup:
+    """Asosiy market menyusi - DINAMIK TUGMALAR"""
+    from src.services.button_service import ButtonTextService
+
     builder = InlineKeyboardBuilder()
 
     # Kategoriyalar - 2 tadan
     builder.row(
-        InlineKeyboardButton(text="🚀 Boost", callback_data="shop:cat:boost"),
-        InlineKeyboardButton(text="🛡️ Himoya", callback_data="shop:cat:protection")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_boost"),
+            callback_data="shop:cat:boost"
+        ),
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_protection"),
+            callback_data="shop:cat:protection"
+        )
     )
     builder.row(
-        InlineKeyboardButton(text="💡 Yordam", callback_data="shop:cat:help"),
-        InlineKeyboardButton(text="📚 Kontent", callback_data="shop:cat:content")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_help"),
+            callback_data="shop:cat:help"
+        ),
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_content"),
+            callback_data="shop:cat:content"
+        )
     )
     builder.row(
-        InlineKeyboardButton(text="🎨 Kosmetik", callback_data="shop:cat:cosmetic"),
-        InlineKeyboardButton(text="🎁 Maxsus", callback_data="shop:cat:special")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_cosmetic"),
+            callback_data="shop:cat:cosmetic"
+        ),
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_special"),
+            callback_data="shop:cat:special"
+        )
     )
 
     # Maxsus bo'limlar
     builder.row(
-        InlineKeyboardButton(text="🎊 CHEGIRMALAR (51% gacha!)", callback_data="shop:bundles")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_bundles"),
+            callback_data="shop:bundles"
+        )
     )
     builder.row(
-        InlineKeyboardButton(text="⭐ Kunlik Taklif", callback_data="shop:daily"),
-        InlineKeyboardButton(text="🔥 Ommabop", callback_data="shop:popular")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_daily"),
+            callback_data="shop:daily"
+        ),
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_popular"),
+            callback_data="shop:popular"
+        )
     )
     builder.row(
-        InlineKeyboardButton(text="🃏 So'z Kartalari", callback_data="shop:decks")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_decks"),
+            callback_data="shop:decks"
+        )
     )
 
     # Inventar va orqaga
     builder.row(
-        InlineKeyboardButton(text="📦 Mening Inventarim", callback_data="shop:inventory")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_shop_inventory"),
+            callback_data="shop:inventory"
+        )
     )
     builder.row(
-        InlineKeyboardButton(text="◀️ Orqaga", callback_data="menu:main")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_back"),
+            callback_data="menu:main"
+        )
     )
 
     return builder.as_markup()
@@ -731,7 +769,7 @@ async def shop_menu(callback: CallbackQuery):
 💳 <b>To'lov:</b> Telegram Stars ⭐
 """
 
-    await callback.message.edit_text(text, reply_markup=shop_menu_keyboard())
+    await callback.message.edit_text(text, reply_markup=await shop_menu_keyboard())
     await callback.answer()
 
 

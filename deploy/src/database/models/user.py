@@ -45,6 +45,9 @@ class User(Base, TimestampMixin):
     # XP va Level
     xp: Mapped[int] = mapped_column(default=0)
     level: Mapped[int] = mapped_column(default=1)
+
+    # Stars (virtual valyuta - turnir mukofotlari, achievements, va h.k.)
+    stars: Mapped[int] = mapped_column(default=0)
     # Referral
     referral_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, nullable=True, index=True)
     referred_by_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True)
@@ -135,6 +138,19 @@ class User(Base, TimestampMixin):
         self.total_correct += correct
         self.total_questions += total
         self.last_quiz_at = datetime.utcnow()
+
+    def add_stars(self, amount: int) -> None:
+        """Stars qo'shish (turnir, achievement mukofotlari)"""
+        if amount > 0:
+            self.stars = (self.stars or 0) + amount
+
+    def remove_stars(self, amount: int) -> bool:
+        """Stars ayirish (do'kon xaridlari). Muvaffaqiyatli bo'lsa True qaytaradi."""
+        current = self.stars or 0
+        if current >= amount:
+            self.stars = current - amount
+            return True
+        return False
 
     # Quiz sozlamalari
     quiz_questions_count: Mapped[int] = mapped_column(default=10)  # 5, 10, 15, 20

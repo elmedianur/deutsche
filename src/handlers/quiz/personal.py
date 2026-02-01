@@ -725,9 +725,13 @@ async def save_quiz_to_db(user_id, correct, wrong, total, percentage, time_taken
             await user_repo.update_stats(user_id, correct=correct, total=total)
             await streak_repo.update_streak(user_id)
             logger.info(f"save_quiz_to_db: saved for user={user_id}")
-            # Yutuqlarni tekshirish
+
+            # Yutuqlarni tekshirish - jami quizlar sonini olish
             from src.services import achievement_service
-            await achievement_service.on_quiz_completed(user_id, correct, total, percentage == 100)
+            user = await user_repo.get_by_user_id(user_id)
+            total_quizzes = user.total_quizzes if user else 1
+            is_perfect = (percentage == 100)
+            await achievement_service.on_quiz_completed(user_id, total_quizzes, is_perfect)
     except Exception as e:
         logger.error(f"save_quiz_to_db error: {e}")
 

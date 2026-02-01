@@ -18,26 +18,51 @@ logger = get_logger(__name__)
 router = Router(name="tournament")
 
 
-def tournament_menu_keyboard() -> InlineKeyboardMarkup:
-    """Tournament menu keyboard"""
+async def tournament_menu_keyboard() -> InlineKeyboardMarkup:
+    """Tournament menu keyboard - DINAMIK TUGMALAR"""
+    from src.services.button_service import ButtonTextService
+
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🏆 Joriy turnir", callback_data="tournament:current"))
+    builder.row(InlineKeyboardButton(
+        text=await ButtonTextService.get("btn_tournament_current"),
+        callback_data="tournament:current"
+    ))
     builder.row(
-        InlineKeyboardButton(text="📊 Reyting", callback_data="tournament:leaderboard"),
-        InlineKeyboardButton(text="🎁 Sovrinlar", callback_data="tournament:prizes")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_tournament_leaderboard"),
+            callback_data="tournament:leaderboard"
+        ),
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_tournament_prizes"),
+            callback_data="tournament:prizes"
+        )
     )
     builder.row(
-        InlineKeyboardButton(text="📜 Qoidalar", callback_data="tournament:rules"),
-        InlineKeyboardButton(text="📈 Natijam", callback_data="tournament:my_stats")
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_tournament_rules"),
+            callback_data="tournament:rules"
+        ),
+        InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_tournament_my_stats"),
+            callback_data="tournament:my_stats"
+        )
     )
-    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="menu:main"))
+    builder.row(InlineKeyboardButton(
+        text=await ButtonTextService.get("btn_back"),
+        callback_data="menu:main"
+    ))
     return builder.as_markup()
 
 
-def back_keyboard() -> InlineKeyboardMarkup:
-    """Back button keyboard"""
+async def back_keyboard() -> InlineKeyboardMarkup:
+    """Back button keyboard - DINAMIK"""
+    from src.services.button_service import ButtonTextService
+
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="tournament:menu"))
+    builder.row(InlineKeyboardButton(
+        text=await ButtonTextService.get("btn_back"),
+        callback_data="tournament:menu"
+    ))
     return builder.as_markup()
 
 
@@ -108,10 +133,10 @@ def _format_time_remaining(end_time: datetime) -> str:
 async def tournament_menu(callback: CallbackQuery, state: FSMContext, db_user: User):
     """Tournament main menu"""
     await state.clear()
-    
+
     try:
         tournament = await get_or_create_tournament()
-        
+
         if tournament:
             text = f"""
 🏆 <b>Turnirlar</b>
@@ -134,43 +159,45 @@ async def tournament_menu(callback: CallbackQuery, state: FSMContext, db_user: U
 Tez orada yangi turnir boshlanadi!
 Bildirishnomalarni yoqib qo'ying.
 """
-        
-        await callback.message.edit_text(text, reply_markup=tournament_menu_keyboard())
-        
+
+        await callback.message.edit_text(text, reply_markup=await tournament_menu_keyboard())
+
     except Exception as e:
         logger.error(f"Tournament menu error: {e}")
         await callback.message.edit_text(
             "🏆 <b>Turnirlar</b>\n\n"
             "⚠️ Xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.",
-            reply_markup=tournament_menu_keyboard()
+            reply_markup=await tournament_menu_keyboard()
         )
-    
+
     await callback.answer()
 
 
 @router.callback_query(F.data == "tournament:current")
 async def current_tournament(callback: CallbackQuery, db_user: User):
     """Current tournament info"""
+    from src.services.button_service import ButtonTextService
+
     try:
         tournament = await get_or_create_tournament()
-        
+
         if not tournament:
             await callback.answer("❌ Hozirda faol turnir yo'q!", show_alert=True)
             return
-        
+
         # Leaderboard olish
         from src.services import tournament_service
         leaderboard = await tournament_service.get_leaderboard(tournament['id'], limit=5)
-        
+
         lb_text = ""
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-        
+
         if leaderboard:
             for i, player in enumerate(leaderboard):
                 lb_text += f"{medals[i]} #{player['rank']}: {player['score']} ball\n"
         else:
             lb_text = "<i>Hali ishtirokchilar yo'q</i>\n"
-        
+
         text = f"""
 🏆 <b>{tournament['name']}</b>
 
@@ -182,18 +209,27 @@ async def current_tournament(callback: CallbackQuery, db_user: User):
 {lb_text}
 💡 Quiz o'ynab ball to'plang!
 """
-        
+
         builder = InlineKeyboardBuilder()
-        builder.row(InlineKeyboardButton(text="🎮 Quiz o'ynash", callback_data="quiz:start"))
-        builder.row(InlineKeyboardButton(text="📊 To'liq reyting", callback_data="tournament:leaderboard"))
-        builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="tournament:menu"))
-        
+        builder.row(InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_tournament_play"),
+            callback_data="quiz:start"
+        ))
+        builder.row(InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_tournament_leaderboard"),
+            callback_data="tournament:leaderboard"
+        ))
+        builder.row(InlineKeyboardButton(
+            text=await ButtonTextService.get("btn_back"),
+            callback_data="tournament:menu"
+        ))
+
         await callback.message.edit_text(text, reply_markup=builder.as_markup())
-        
+
     except Exception as e:
         logger.error(f"Current tournament error: {e}")
         await callback.answer("❌ Xatolik yuz berdi!", show_alert=True)
-    
+
     await callback.answer()
 
 
@@ -202,32 +238,32 @@ async def leaderboard(callback: CallbackQuery, db_user: User):
     """Full leaderboard"""
     try:
         tournament = await get_or_create_tournament()
-        
+
         if not tournament:
             await callback.answer("❌ Hozirda faol turnir yo'q!", show_alert=True)
             return
-        
+
         from src.services import tournament_service
         leaderboard_data = await tournament_service.get_leaderboard(tournament['id'], limit=15)
-        
+
         if not leaderboard_data:
             text = f"📊 <b>Reyting - {tournament['name']}</b>\n\n<i>Hali ishtirokchilar yo'q</i>\n\n💡 Birinchi bo'lib qatnashing!"
         else:
             text = f"📊 <b>Reyting - {tournament['name']}</b>\n\n"
             medals = ["🥇", "🥈", "🥉"]
-            
+
             for player in leaderboard_data:
                 rank = player['rank']
                 prefix = medals[rank - 1] if rank <= 3 else f"{rank}."
                 accuracy = f"{player['accuracy']:.0f}%" if player['accuracy'] > 0 else "-"
                 text += f"{prefix} <b>{player['score']:.0f}</b> ball | {accuracy} aniqlik\n"
-        
-        await callback.message.edit_text(text, reply_markup=back_keyboard())
-        
+
+        await callback.message.edit_text(text, reply_markup=await back_keyboard())
+
     except Exception as e:
         logger.error(f"Leaderboard error: {e}")
         await callback.answer("❌ Xatolik yuz berdi!", show_alert=True)
-    
+
     await callback.answer()
 
 
@@ -254,7 +290,7 @@ async def prizes(callback: CallbackQuery):
 
 💡 <i>Har hafta yangi turnir boshlanadi!</i>
 """
-    await callback.message.edit_text(text, reply_markup=back_keyboard())
+    await callback.message.edit_text(text, reply_markup=await back_keyboard())
     await callback.answer()
 
 
@@ -282,17 +318,19 @@ async def rules(callback: CallbackQuery):
 
 ⚠️ Qoidabuzarlar diskvalifikatsiya qilinadi!
 """
-    await callback.message.edit_text(text, reply_markup=back_keyboard())
+    await callback.message.edit_text(text, reply_markup=await back_keyboard())
     await callback.answer()
 
 
 @router.callback_query(F.data == "tournament:my_stats")
 async def my_stats(callback: CallbackQuery, db_user: User):
     """User's tournament stats"""
+    from src.services.button_service import ButtonTextService
+
     try:
         from src.services import tournament_service
         stats = await tournament_service.get_user_tournament_stats(db_user.user_id)
-        
+
         if not stats:
             tournament = await get_or_create_tournament()
             if tournament:
@@ -307,14 +345,20 @@ Quiz o'ynab turnirda qatnashing va sovrinlar yuting!
 """
             else:
                 text = "📈 <b>Turnir statistikasi</b>\n\n❌ Hozirda faol turnir yo'q."
-            
+
             builder = InlineKeyboardBuilder()
-            builder.row(InlineKeyboardButton(text="🎮 Qatnashish", callback_data="quiz:start"))
-            builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="tournament:menu"))
+            builder.row(InlineKeyboardButton(
+                text=await ButtonTextService.get("btn_tournament_join"),
+                callback_data="quiz:start"
+            ))
+            builder.row(InlineKeyboardButton(
+                text=await ButtonTextService.get("btn_back"),
+                callback_data="tournament:menu"
+            ))
             await callback.message.edit_text(text, reply_markup=builder.as_markup())
             await callback.answer()
             return
-        
+
         if not stats.get('registered'):
             text = f"""
 📈 <b>Turnir statistikasi</b>
@@ -326,11 +370,17 @@ Quiz o'ynab turnirda qatnashing va sovrinlar yuting!
 Quiz o'ynab turnirda qatnashing va sovrinlar yuting!
 """
             builder = InlineKeyboardBuilder()
-            builder.row(InlineKeyboardButton(text="🎮 Qatnashish", callback_data="quiz:start"))
-            builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="tournament:menu"))
+            builder.row(InlineKeyboardButton(
+                text=await ButtonTextService.get("btn_tournament_join"),
+                callback_data="quiz:start"
+            ))
+            builder.row(InlineKeyboardButton(
+                text=await ButtonTextService.get("btn_back"),
+                callback_data="tournament:menu"
+            ))
         else:
             accuracy = f"{stats['accuracy']:.1f}%" if stats['accuracy'] > 0 else "0%"
-            
+
             # Reyting bo'yicha emoji
             if stats['rank'] == 1:
                 rank_emoji = "🥇"
@@ -342,7 +392,7 @@ Quiz o'ynab turnirda qatnashing va sovrinlar yuting!
                 rank_emoji = "🔥"
             else:
                 rank_emoji = "📍"
-            
+
             text = f"""
 📈 <b>Turnir statistikasi</b>
 
@@ -356,15 +406,21 @@ Quiz o'ynab turnirda qatnashing va sovrinlar yuting!
 {"🏆 Top 3 da ekansiz! Davom eting!" if stats["rank"] <= 3 else "💪 Ko'proq quiz o'ynab reytingda ko'tariling!"}
 """
             builder = InlineKeyboardBuilder()
-            builder.row(InlineKeyboardButton(text="🎮 Yana o'ynash", callback_data="quiz:start"))
-            builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="tournament:menu"))
-        
+            builder.row(InlineKeyboardButton(
+                text=await ButtonTextService.get("btn_tournament_play_more"),
+                callback_data="quiz:start"
+            ))
+            builder.row(InlineKeyboardButton(
+                text=await ButtonTextService.get("btn_back"),
+                callback_data="tournament:menu"
+            ))
+
         await callback.message.edit_text(text, reply_markup=builder.as_markup())
-        
+
     except Exception as e:
         logger.error(f"My stats error: {e}")
         await callback.answer("❌ Xatolik yuz berdi!", show_alert=True)
-    
+
     await callback.answer()
 
 

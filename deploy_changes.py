@@ -33,6 +33,11 @@ FILES_TO_UPLOAD = [
     # Tournament va achievement xatolar tuzatilgan
     ("deploy/src/services/tournament_service.py", "/app/src/services/tournament_service.py"),
     ("deploy/src/services/__init__.py", "/app/src/services/__init__.py"),
+    # Ichki menyu tugmalari dinamik qilingan
+    ("deploy/src/handlers/shop/__init__.py", "/app/src/handlers/shop/__init__.py"),
+    ("deploy/src/handlers/tournament/__init__.py", "/app/src/handlers/tournament/__init__.py"),
+    # User model (stars field qo'shildi)
+    ("deploy/src/database/models/user.py", "/app/src/database/models/user.py"),
 ]
 
 def main():

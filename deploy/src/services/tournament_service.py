@@ -342,16 +342,22 @@ async def finish_expired_tournaments():
                 ]
                 
                 sub_repo = SubscriptionRepository(session)
-                
+                from src.repositories import UserRepository
+                user_repo = UserRepository(session)
+
                 for i, winner in enumerate(winners):
                     if i < len(prizes):
                         prize = prizes[i]
                         # Premium berish
                         await sub_repo.extend_premium(
-                            winner.user_id, 
+                            winner.user_id,
                             days=prize["premium_days"]
                         )
-                        # TODO: Stars berish (wallet tizimi kerak)
+                        # Stars berish
+                        user = await user_repo.get_by_user_id(winner.user_id)
+                        if user:
+                            user.add_stars(prize["stars"])
+                            logger.info(f"Tournament prize: user={winner.user_id}, stars={prize['stars']}, premium_days={prize['premium_days']}")
                 
                 # Turnir statusini yangilash
                 tournament.status = TournamentStatus.FINISHED

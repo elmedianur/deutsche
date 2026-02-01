@@ -78,6 +78,56 @@ DEFAULT_BUTTONS: Dict[str, str] = {
     "btn_admin_premium": "⭐ Premium",
     "btn_admin_broadcast": "📢 Xabar yuborish",
     "btn_admin_settings": "⚙️ Sozlamalar",
+
+    # ============================================
+    # SHOP (DO'KON) ICHKI TUGMALARI
+    # ============================================
+    "btn_shop_boost": "🚀 Boost",
+    "btn_shop_protection": "🛡️ Himoya",
+    "btn_shop_help": "💡 Yordam",
+    "btn_shop_content": "📚 Kontent",
+    "btn_shop_cosmetic": "🎨 Kosmetik",
+    "btn_shop_special": "🎁 Maxsus",
+    "btn_shop_bundles": "🎊 CHEGIRMALAR (51% gacha!)",
+    "btn_shop_daily": "⭐ Kunlik Taklif",
+    "btn_shop_popular": "🔥 Ommabop",
+    "btn_shop_decks": "🃏 So'z Kartalari",
+    "btn_shop_inventory": "📦 Mening Inventarim",
+
+    # ============================================
+    # TURNIR ICHKI TUGMALARI
+    # ============================================
+    "btn_tournament_current": "🏆 Joriy turnir",
+    "btn_tournament_leaderboard": "📊 Reyting",
+    "btn_tournament_prizes": "🎁 Sovrinlar",
+    "btn_tournament_rules": "📜 Qoidalar",
+    "btn_tournament_my_stats": "📈 Natijam",
+    "btn_tournament_play": "🎮 Quiz o'ynash",
+    "btn_tournament_join": "🎮 Qatnashish",
+    "btn_tournament_play_more": "🎮 Yana o'ynash",
+
+    # ============================================
+    # STATISTIKA ICHKI TUGMALARI
+    # ============================================
+    "btn_stats_overall": "📊 Umumiy statistika",
+    "btn_stats_weekly": "📅 Haftalik",
+    "btn_stats_monthly": "📆 Oylik",
+    "btn_stats_achievements": "🏅 Yutuqlar",
+    "btn_stats_history": "📜 Tarix",
+
+    # ============================================
+    # ACHIEVEMENTS ICHKI TUGMALARI
+    # ============================================
+    "btn_achievements_all": "🏅 Barcha yutuqlar",
+    "btn_achievements_earned": "✅ Qo'lga kiritilgan",
+    "btn_achievements_locked": "🔒 Qolganlar",
+
+    # ============================================
+    # STREAK ICHKI TUGMALARI
+    # ============================================
+    "btn_streak_freeze": "❄️ Streak muzlatish",
+    "btn_streak_history": "📊 Streak tarixi",
+    "btn_streak_play": "🎮 Bugun o'ynash",
 }
 
 # Button categories for admin panel
@@ -124,6 +174,36 @@ BUTTON_CATEGORIES = {
         "name": "Admin tugmalari",
         "keys": ["btn_admin_stats", "btn_admin_users", "btn_admin_questions",
                  "btn_admin_premium", "btn_admin_broadcast", "btn_admin_settings"]
+    },
+    # ============================================
+    # YANGI KATEGORIYALAR - ICHKI MENYULAR
+    # ============================================
+    "shop_inner": {
+        "name": "🛒 Do'kon ichki tugmalari",
+        "keys": ["btn_shop_boost", "btn_shop_protection", "btn_shop_help",
+                 "btn_shop_content", "btn_shop_cosmetic", "btn_shop_special",
+                 "btn_shop_bundles", "btn_shop_daily", "btn_shop_popular",
+                 "btn_shop_decks", "btn_shop_inventory"]
+    },
+    "tournament_inner": {
+        "name": "🏆 Turnir ichki tugmalari",
+        "keys": ["btn_tournament_current", "btn_tournament_leaderboard",
+                 "btn_tournament_prizes", "btn_tournament_rules",
+                 "btn_tournament_my_stats", "btn_tournament_play",
+                 "btn_tournament_join", "btn_tournament_play_more"]
+    },
+    "stats_inner": {
+        "name": "📊 Statistika ichki tugmalari",
+        "keys": ["btn_stats_overall", "btn_stats_weekly", "btn_stats_monthly",
+                 "btn_stats_achievements", "btn_stats_history"]
+    },
+    "achievements_inner": {
+        "name": "🏅 Yutuqlar ichki tugmalari",
+        "keys": ["btn_achievements_all", "btn_achievements_earned", "btn_achievements_locked"]
+    },
+    "streak_inner": {
+        "name": "🔥 Streak ichki tugmalari",
+        "keys": ["btn_streak_freeze", "btn_streak_history", "btn_streak_play"]
     }
 }
 
