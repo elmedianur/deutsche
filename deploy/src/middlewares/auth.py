@@ -140,7 +140,7 @@ class AuthMiddleware(BaseMiddleware):
                 "is_admin": db_user.is_admin,
                 "xp": db_user.xp,
                 "level": db_user.level,
-                "coins": db_user.coins,
+                "stars": db_user.stars,  # coins -> stars (to'g'ri field nomi)
             }
 
             # Ob'ektni session'dan ajratish (detach)

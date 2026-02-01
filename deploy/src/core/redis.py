@@ -5,7 +5,7 @@ Falls back to in-memory storage if Redis is unavailable
 """
 import json
 import time
-import threading
+import asyncio
 from datetime import timedelta
 from typing import Any, Optional, Dict, Tuple
 
@@ -21,7 +21,7 @@ _use_memory_fallback: bool = False
 # In-memory fallback storage with TTL support
 # Format: {key: (value, expire_timestamp or None)}
 _memory_store: Dict[str, Tuple[Any, Optional[float]]] = {}
-_memory_lock = threading.Lock()
+_memory_lock = asyncio.Lock()  # asyncio.Lock - async kod uchun to'g'ri
 
 # Memory cleanup settings
 MEMORY_CLEANUP_INTERVAL = 60  # Har daqiqada cleanup
@@ -29,8 +29,8 @@ MAX_MEMORY_ITEMS = 10000  # Maksimum item soni
 _last_cleanup = 0
 
 
-def _cleanup_expired_memory():
-    """Muddati tugagan itemlarni tozalash - Thread-safe versiya"""
+async def _cleanup_expired_memory():
+    """Muddati tugagan itemlarni tozalash - Async-safe versiya"""
     global _last_cleanup
 
     now = time.time()
@@ -39,7 +39,7 @@ def _cleanup_expired_memory():
 
     cleaned_count = 0
 
-    with _memory_lock:
+    async with _memory_lock:
         # Double-check locking - lock ichida yana tekshirish
         if now - _last_cleanup < MEMORY_CLEANUP_INTERVAL:
             return
@@ -52,7 +52,7 @@ def _cleanup_expired_memory():
             if expire_at and expire_at < now:
                 keys_to_delete.append(key)
 
-        # Thread-safe o'chirish - pop() ishlatish
+        # Async-safe o'chirish - pop() ishlatish
         for key in keys_to_delete:
             _memory_store.pop(key, None)  # KeyError bo'lmaydi
             cleaned_count += 1
@@ -75,11 +75,11 @@ def _cleanup_expired_memory():
 
 
 class MemoryFallback:
-    """In-memory fallback when Redis is unavailable - TTL supported"""
+    """In-memory fallback when Redis is unavailable - TTL supported (Async-safe)"""
 
     async def get(self, key: str) -> Optional[str]:
-        _cleanup_expired_memory()
-        with _memory_lock:
+        await _cleanup_expired_memory()
+        async with _memory_lock:
             if key not in _memory_store:
                 return None
             value, expire_at = _memory_store[key]
@@ -90,24 +90,24 @@ class MemoryFallback:
             return value
 
     async def set(self, key: str, value: str, ex: int = None) -> None:
-        _cleanup_expired_memory()
-        with _memory_lock:
+        await _cleanup_expired_memory()
+        async with _memory_lock:
             expire_at = time.time() + ex if ex else None
             _memory_store[key] = (value, expire_at)
 
     async def setex(self, key: str, seconds: int, value: str) -> None:
         """Set with expiration"""
-        _cleanup_expired_memory()
-        with _memory_lock:
+        await _cleanup_expired_memory()
+        async with _memory_lock:
             expire_at = time.time() + seconds
             _memory_store[key] = (value, expire_at)
 
     async def delete(self, key: str) -> None:
-        with _memory_lock:
+        async with _memory_lock:
             _memory_store.pop(key, None)
 
     async def exists(self, key: str) -> bool:
-        with _memory_lock:
+        async with _memory_lock:
             if key not in _memory_store:
                 return False
             value, expire_at = _memory_store[key]
@@ -117,7 +117,7 @@ class MemoryFallback:
             return True
 
     async def incr(self, key: str) -> int:
-        with _memory_lock:
+        async with _memory_lock:
             if key in _memory_store:
                 old_val, expire_at = _memory_store[key]
                 val = int(old_val) + 1
@@ -128,13 +128,13 @@ class MemoryFallback:
             return val
 
     async def expire(self, key: str, seconds: int) -> None:
-        with _memory_lock:
+        async with _memory_lock:
             if key in _memory_store:
                 value, _ = _memory_store[key]
                 _memory_store[key] = (value, time.time() + seconds)
 
     async def ttl(self, key: str) -> int:
-        with _memory_lock:
+        async with _memory_lock:
             if key not in _memory_store:
                 return -2  # Key mavjud emas
             value, expire_at = _memory_store[key]
@@ -145,8 +145,8 @@ class MemoryFallback:
 
     async def sadd(self, key: str, *values) -> int:
         """Add to set (for duel matching)"""
-        _cleanup_expired_memory()
-        with _memory_lock:
+        await _cleanup_expired_memory()
+        async with _memory_lock:
             if key not in _memory_store:
                 _memory_store[key] = (set(), None)
             current_val, expire_at = _memory_store[key]
@@ -159,7 +159,7 @@ class MemoryFallback:
 
     async def smembers(self, key: str) -> set:
         """Get set members"""
-        with _memory_lock:
+        async with _memory_lock:
             if key not in _memory_store:
                 return set()
             value, expire_at = _memory_store[key]
@@ -170,7 +170,7 @@ class MemoryFallback:
 
     async def srem(self, key: str, *values) -> int:
         """Remove from set"""
-        with _memory_lock:
+        async with _memory_lock:
             if key in _memory_store:
                 current_val, expire_at = _memory_store[key]
                 if isinstance(current_val, set):
@@ -184,9 +184,9 @@ class MemoryFallback:
         pass
 
 
-def get_memory_stats() -> dict:
-    """Memory fallback statistikasi"""
-    with _memory_lock:
+async def get_memory_stats() -> dict:
+    """Memory fallback statistikasi (async)"""
+    async with _memory_lock:
         now = time.time()
         total = len(_memory_store)
         expired = sum(1 for _, (_, exp) in _memory_store.items() if exp and exp < now)

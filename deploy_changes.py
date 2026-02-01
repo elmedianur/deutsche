@@ -38,6 +38,10 @@ FILES_TO_UPLOAD = [
     ("deploy/src/handlers/tournament/__init__.py", "/app/src/handlers/tournament/__init__.py"),
     # User model (stars field qo'shildi)
     ("deploy/src/database/models/user.py", "/app/src/database/models/user.py"),
+    # Kritik xatolar tuzatildi
+    ("deploy/src/core/redis.py", "/app/src/core/redis.py"),
+    ("deploy/src/core/security.py", "/app/src/core/security.py"),
+    ("deploy/src/middlewares/auth.py", "/app/src/middlewares/auth.py"),
 ]
 
 def main():
@@ -83,7 +87,8 @@ def main():
 
         # Restart bot
         print("\n[*] Bot qayta ishga tushirilmoqda...")
-        stdin, stdout, stderr = client.exec_command("cd /app && docker-compose restart quiz_bot_pro")
+        # Try different docker restart methods
+        stdin, stdout, stderr = client.exec_command("docker restart quiz_bot_pro 2>/dev/null || docker-compose -f /app/docker-compose.yml restart quiz_bot_pro 2>/dev/null || cd /root && docker compose restart quiz_bot_pro")
         exit_status = stdout.channel.recv_exit_status()
 
         if exit_status == 0:
@@ -91,9 +96,14 @@ def main():
         else:
             print(f"[!] Qayta ishga tushirishda xatolik: {stderr.read().decode()}")
 
+        # Wait for bot to start
+        import time
+        print("\n[*] Bot ishga tushishini kutmoqda (5 soniya)...")
+        time.sleep(5)
+
         # Check bot logs
-        print("\n[*] Bot loglari (oxirgi 10 qator):")
-        stdin, stdout, stderr = client.exec_command("docker logs quiz_bot_pro --tail 10")
+        print("\n[*] Bot loglari (oxirgi 15 qator):")
+        stdin, stdout, stderr = client.exec_command("docker logs quiz_bot_pro --tail 15 2>&1")
         print(stdout.read().decode())
 
         client.close()

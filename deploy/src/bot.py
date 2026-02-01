@@ -290,8 +290,8 @@ async def cleanup_memory_and_sessions():
         # 3. Memory fallback cleanup (TTL expired items)
         try:
             from src.core.redis import get_memory_stats as redis_memory_stats, _cleanup_expired_memory
-            _cleanup_expired_memory()
-            stats = redis_memory_stats()
+            await _cleanup_expired_memory()  # FIXED: async funksiya - await kerak
+            stats = await redis_memory_stats()  # FIXED: get_memory_stats ham async
             if stats["total_items"] > 0:
                 logger.debug(f"Memory fallback: {stats}")
         except Exception as e:

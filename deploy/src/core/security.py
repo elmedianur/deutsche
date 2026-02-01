@@ -228,9 +228,10 @@ def rate_limit(
                     break
             
             if user_id is None:
-                # Fallback key - user_id topilmasa ham rate limiting qo'llaniladi
-                # Bu xavfsizlik bypass'ini oldini oladi
-                user_id = "unknown"
+                # User_id topilmasa, request'ni rad qilish (xavfsizlik uchun)
+                # "unknown" ishlatilsa barcha noma'lum foydalanuvchilar bitta bucket'dan foydalanadi
+                logger.warning("Rate limit check: user_id not found, skipping handler")
+                return None  # Handler'ni bajarmaslik
             
             # Generate key
             if key_func:
