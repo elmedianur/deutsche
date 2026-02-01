@@ -436,7 +436,7 @@ async def finish_quiz(message: Message, quiz_data: Dict, db_user: User, state: F
     wrong = quiz_data["wrong_count"]
     total = correct + wrong
     percentage = (correct / total * 100) if total > 0 else 0
-    
+
     # Determine rating
     if percentage >= 90:
         rating = "🏆 A'lo!"
@@ -450,7 +450,34 @@ async def finish_quiz(message: Message, quiz_data: Dict, db_user: User, state: F
     else:
         rating = "📖 Ko'proq mashq qiling"
         emoji = "💡"
-    
+
+    # Xato javoblarni Redis'ga saqlash (takrorlash uchun)
+    wrong_questions = []
+    for answer in quiz_data.get("answers", []):
+        if not answer.get("is_correct"):
+            wrong_questions.append(answer.get("question_id"))
+
+    if wrong_questions:
+        try:
+            from src.core.redis import redis_client
+            import json
+            # Oxirgi 50 ta xatoni saqlash
+            key = f"wrong_answers:{db_user.user_id}"
+            existing = await redis_client.get(key)
+            if existing:
+                existing_list = json.loads(existing)
+            else:
+                existing_list = []
+            # Yangilarini qo'shish (dublikatlar yo'q)
+            for qid in wrong_questions:
+                if qid not in existing_list:
+                    existing_list.append(qid)
+            # Oxirgi 50 tasini saqlash
+            existing_list = existing_list[-50:]
+            await redis_client.set(key, json.dumps(existing_list), ex=604800)  # 7 kun
+        except Exception as e:
+            logger.debug(f"Wrong answers save error: {e}")
+
     # Save to database
     try:
         async with get_session() as session:
@@ -551,9 +578,165 @@ async def finish_quiz(message: Message, quiz_data: Dict, db_user: User, state: F
 
 
 @router.callback_query(F.data == "quiz:review")
-async def review_mistakes(callback: CallbackQuery):
-    """Review mistakes - simplified"""
-    await callback.answer("📋 Xatolarni ko'rish tez orada qo'shiladi!", show_alert=True)
+async def review_mistakes(callback: CallbackQuery, db_user: User):
+    """Review wrong answers"""
+    try:
+        from src.core.redis import redis_client
+        import json
+
+        key = f"wrong_answers:{db_user.user_id}"
+        data = await redis_client.get(key)
+
+        if not data:
+            await callback.answer("✅ Xato javoblar yo'q! Ajoyib!", show_alert=True)
+            return
+
+        wrong_ids = json.loads(data)
+
+        if not wrong_ids:
+            await callback.answer("✅ Xato javoblar yo'q!", show_alert=True)
+            return
+
+        # So'nggi 10 ta xatoni ko'rsatish
+        async with get_session() as session:
+            repo = QuestionRepository(session)
+            questions = []
+            for qid in wrong_ids[-10:]:
+                q = await repo.get_by_id(qid)
+                if q:
+                    questions.append(q)
+
+        if not questions:
+            await callback.answer("❌ Savollar topilmadi", show_alert=True)
+            return
+
+        text = "📋 <b>Oxirgi xatolar</b>\n\n"
+        for i, q in enumerate(questions, 1):
+            correct_answer = [q.option_a, q.option_b, q.option_c, q.option_d][q.correct_index]
+            text += f"<b>{i}.</b> {q.question_text}\n"
+            text += f"   ✅ <i>{correct_answer}</i>\n\n"
+
+        text += f"\n📊 Jami xatolar: <b>{len(wrong_ids)}</b> ta"
+
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(
+            text="🔄 Xatolarni takrorlash",
+            callback_data="quiz:retry_mistakes"
+        ))
+        builder.row(InlineKeyboardButton(
+            text="🗑 Xatolarni tozalash",
+            callback_data="quiz:clear_mistakes"
+        ))
+        builder.row(InlineKeyboardButton(
+            text="🏠 Bosh menyu",
+            callback_data="menu:main"
+        ))
+
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+        await callback.answer()
+
+    except Exception as e:
+        logger.error(f"Review mistakes error: {e}")
+        await callback.answer("❌ Xatolik yuz berdi", show_alert=True)
+
+
+@router.callback_query(F.data == "quiz:retry_mistakes")
+async def retry_mistakes(callback: CallbackQuery, state: FSMContext, db_user: User):
+    """Quiz from wrong answers"""
+    try:
+        from src.core.redis import redis_client
+        import json
+
+        key = f"wrong_answers:{db_user.user_id}"
+        data = await redis_client.get(key)
+
+        if not data:
+            await callback.answer("✅ Xato javoblar yo'q!", show_alert=True)
+            return
+
+        wrong_ids = json.loads(data)
+
+        if not wrong_ids:
+            await callback.answer("✅ Xato javoblar yo'q!", show_alert=True)
+            return
+
+        # Savollarni olish
+        async with get_session() as session:
+            repo = QuestionRepository(session)
+            questions = []
+            for qid in wrong_ids[-20:]:  # Maksimum 20 ta
+                q = await repo.get_by_id(qid)
+                if q:
+                    questions.append(q)
+
+        if not questions:
+            await callback.answer("❌ Savollar topilmadi", show_alert=True)
+            return
+
+        random.shuffle(questions)
+        questions = questions[:min(len(questions), 10)]  # 10 tagacha
+
+        # Quiz boshlash
+        quiz_data = {
+            "questions": [
+                {
+                    "id": q.id,
+                    "text": q.question_text,
+                    "options": [q.option_a, q.option_b, q.option_c, q.option_d],
+                    "correct": q.correct_index,
+                    "explanation": q.explanation
+                }
+                for q in questions
+            ],
+            "current": 0,
+            "correct_count": 0,
+            "wrong_count": 0,
+            "answers": [],
+            "start_time": datetime.utcnow().isoformat(),
+            "is_retry": True
+        }
+
+        await state.update_data(quiz=quiz_data)
+        await state.set_state(QuizStates.in_quiz)
+
+        await callback.answer("🔄 Xatolarni takrorlash boshlanmoqda!")
+        await send_question(callback.message, quiz_data, 0)
+
+    except Exception as e:
+        logger.error(f"Retry mistakes error: {e}")
+        await callback.answer("❌ Xatolik yuz berdi", show_alert=True)
+
+
+@router.callback_query(F.data == "quiz:clear_mistakes")
+async def clear_mistakes(callback: CallbackQuery, db_user: User):
+    """Clear wrong answers"""
+    try:
+        from src.core.redis import redis_client
+
+        key = f"wrong_answers:{db_user.user_id}"
+        await redis_client.delete(key)
+
+        await callback.answer("🗑 Xatolar tozalandi!", show_alert=True)
+
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(
+            text="🎯 Yangi quiz",
+            callback_data="quiz:start"
+        ))
+        builder.row(InlineKeyboardButton(
+            text="🏠 Bosh menyu",
+            callback_data="menu:main"
+        ))
+
+        await callback.message.edit_text(
+            "✅ <b>Xatolar tozalandi!</b>\n\n"
+            "Endi yangi quizda omad!",
+            reply_markup=builder.as_markup()
+        )
+
+    except Exception as e:
+        logger.error(f"Clear mistakes error: {e}")
+        await callback.answer("❌ Xatolik yuz berdi", show_alert=True)
 
 
 @router.callback_query(F.data == "quiz:cancel")

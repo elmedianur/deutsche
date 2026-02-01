@@ -215,8 +215,7 @@ def _create_start_keyboard(db_user: User, level_name: str):
         InlineKeyboardButton(text="🏆 Yutuqlar", callback_data="achievements:menu")
     )
     builder.row(
-        InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="settings:menu"),
-        InlineKeyboardButton(text="👋 Chiqish", callback_data="session:end")
+        InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="settings:menu")
     )
 
     return builder.as_markup()
@@ -269,25 +268,12 @@ async def onboard_help_level(callback: CallbackQuery):
     text = """
 ❓ <b>Qaysi darajani tanlash kerak?</b>
 
-<b>🟢 A1 - Boshlang'ich</b>
-• Hech narsa bilmayman
-• Yangi boshlayman
+🟢 <b>A1</b> - Yangi boshlayman
+🟡 <b>A2</b> - Oddiy so'zlarni bilaman
+🔵 <b>B1</b> - Gaplar tuza olaman
+🟣 <b>B2</b> - Erkin gaplashaman
 
-<b>🟡 A2 - Elementar</b>
-• Oddiy so'zlarni bilaman
-• Salomlashish, o'zimni tanishtira olaman
-
-<b>🔵 B1 - O'rta</b>
-• Oddiy gaplar tuza olaman
-• Kundalik mavzularda gaplasha olaman
-
-<b>🟣 B2 - Yuqori o'rta</b>
-• Erkin gaplasha olaman
-• Murakkab matnlarni tushunaman
-
-<b>💡 Tavsiya:</b>
-Ishonchsiz bo'lsangiz, <b>A1</b> dan boshlang!
-Keyinroq sozlamalardan o'zgartirishingiz mumkin.
+💡 Ishonchsiz bo'lsangiz, <b>A1</b> dan boshlang!
 """
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -710,22 +696,23 @@ async def stats_command(message: Message):
     total_answered = user.total_correct + (user.total_questions - user.total_correct)
     accuracy = round(user.total_correct / user.total_questions * 100, 1) if user.total_questions > 0 else 0
     
+    # SM-2 ni oddiy tilga o'girish
+    mastered_pct = round(sm2_stats['mastered'] / sm2_stats['total'] * 100) if sm2_stats['total'] > 0 else 0
+
     text = f"""
 📊 <b>Sizning statistikangiz</b>
 
-👤 <b>Umumiy:</b>
+<b>Quiz natijalari:</b>
 ├ 📝 Quizlar: {user.total_quizzes}
-├ ✅ To'g'ri javoblar: {user.total_correct}
-├ 📊 Jami savollar: {user.total_questions}
+├ ✅ To'g'ri: {user.total_correct}/{user.total_questions}
 ├ 🎯 Aniqlik: {accuracy}%
-└ 💎 Premium: {'Ha' if user.is_premium else "Yo'q"}
+└ 💎 Premium: {'Ha ⭐' if user.is_premium else "Yo'q"}
 
-📚 <b>O'rganish (SM-2):</b>
-├ 📖 Jami savollar: {sm2_stats['total']}
-├ ✅ O'zlashtirilgan: {sm2_stats['mastered']}
+<b>So'z o'rganish:</b>
+├ 📖 Jami so'zlar: {sm2_stats['total']}
+├ ✅ Yodlangan: {sm2_stats['mastered']} ({mastered_pct}%)
 ├ 📝 O'rganilmoqda: {sm2_stats['learning']}
-├ 🔄 Bugun takrorlash: {sm2_stats['due_today']}
-└ 🎯 Aniqlik: {sm2_stats['accuracy']}%
+└ 🔔 Bugun takrorlash: {sm2_stats['due_today']}
 """
     
     builder = InlineKeyboardBuilder()

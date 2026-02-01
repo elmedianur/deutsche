@@ -48,39 +48,91 @@ async def stats_menu(callback: CallbackQuery, db_user: User):
     async with get_session() as session:
         progress_repo = ProgressRepository(session)
         streak_repo = StreakRepository(session)
-        
+
         stats = await progress_repo.get_user_stats(db_user.user_id)
         streak = await streak_repo.get_or_create(db_user.user_id)
-        
+
         # Get achievement stats
         ach_stats = await achievement_service.get_achievement_stats(db_user.user_id)
+
     user_rank = await get_user_rank(db_user.user_id)
-    
+
+    # Daraja progressi
+    level_progress_text = ""
+    if db_user.current_level_id:
+        try:
+            from src.services import quiz_service
+            levels = await quiz_service.get_levels()
+            current_level_name = "Noma'lum"
+            for level in levels:
+                if level["id"] == db_user.current_level_id:
+                    current_level_name = level["name"]
+                    break
+
+            days = await quiz_service.get_days(db_user.current_level_id)
+            total_days = len(days)
+            completed_days = db_user.current_day_number - 1 if db_user.current_day_number > 0 else 0
+            progress_pct = (completed_days / total_days * 100) if total_days > 0 else 0
+
+            # Progress bar
+            filled = int(progress_pct / 10)
+            empty = 10 - filled
+            progress_bar = "█" * filled + "░" * empty
+
+            level_progress_text = f"""
+<b>Daraja progressi:</b>
+📚 {current_level_name}: {progress_bar} {progress_pct:.0f}%
+   ({completed_days}/{total_days} kun)
+"""
+        except Exception:
+            pass
+
+    # Xatolar soni
+    wrong_count = 0
+    try:
+        from src.core.redis import redis_client
+        import json
+        key = f"wrong_answers:{db_user.user_id}"
+        data = await redis_client.get(key)
+        if data:
+            wrong_count = len(json.loads(data))
+    except Exception:
+        pass
+
+    wrong_text = f"\n<b>Xatolar:</b>\n❌ {wrong_count} ta xato javob" if wrong_count > 0 else ""
+
     text = f"""
 📊 <b>Sizning statistikangiz</b>
 
 <b>Quiz natijalari:</b>
-• Jami quiz: {stats['total_quizzes']}
-• To'g'ri javoblar: {stats['total_correct']}
-• Jami savollar: {stats['total_questions']}
-• Aniqlik: {stats['accuracy']:.1f}%
-• O'rtacha vaqt: {stats['avg_time']:.1f}s
-
+├ 📝 Jami quiz: {stats['total_quizzes']}
+├ ✅ To'g'ri: {stats['total_correct']}/{stats['total_questions']}
+└ 🎯 Aniqlik: {stats['accuracy']:.1f}%
+{level_progress_text}
 <b>Streak:</b>
-🔥 Joriy streak: {streak.current_streak} kun
-🏆 Eng uzun streak: {streak.longest_streak} kun
+🔥 Joriy: {streak.current_streak} kun | 🏆 Eng uzun: {streak.longest_streak} kun
 
 <b>Yutuqlar:</b>
-🏅 {ach_stats['earned']}/{ach_stats['total']} ({ach_stats['percentage']:.0f}%)
-
-<b>Reyting:</b>
-🥇 #{user_rank} o'rin
+🏅 {ach_stats['earned']}/{ach_stats['total']} | 🥇 #{user_rank} o'rin
+{wrong_text}
 """
-    
-    await callback.message.edit_text(
-        text,
-        reply_markup=await back_button()
-    )
+
+    builder = InlineKeyboardBuilder()
+    if wrong_count > 0:
+        builder.row(InlineKeyboardButton(
+            text=f"🔄 Xatolarni takrorlash ({wrong_count})",
+            callback_data="quiz:retry_mistakes"
+        ))
+    builder.row(InlineKeyboardButton(
+        text="🔥 Streak ma'lumotlari",
+        callback_data="streak:info"
+    ))
+    builder.row(InlineKeyboardButton(
+        text="🏠 Bosh menyu",
+        callback_data="menu:main"
+    ))
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
 
 
@@ -265,52 +317,6 @@ async def toggle_setting(callback: CallbackQuery, db_user: User):
 async def noop_callback(callback: CallbackQuery):
     """No operation callback (for disabled buttons)"""
     await callback.answer()
-
-
-@router.callback_query(F.data == "settings:language")
-async def settings_language(callback: CallbackQuery, db_user: User):
-    """Show language settings"""
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    from aiogram.types import InlineKeyboardButton
-    
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="🇺🇿 O'zbekcha", callback_data="settings:set_lang:uz"),
-        InlineKeyboardButton(text="🇷🇺 Русский", callback_data="settings:set_lang:ru")
-    )
-    builder.row(
-        InlineKeyboardButton(text="🇬🇧 English", callback_data="settings:set_lang:en")
-    )
-    builder.row(
-        InlineKeyboardButton(text="◀️ Orqaga", callback_data="settings:menu")
-    )
-    
-    await callback.message.edit_text(
-        "🌐 <b>Til sozlamalari</b>\n\n"
-        "Bot tilini tanlang:",
-        reply_markup=builder.as_markup()
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("settings:set_lang:"))
-async def set_language(callback: CallbackQuery, db_user: User):
-    """Set user language"""
-    lang = callback.data.split(":")[-1]
-
-    lang_names = {"uz": "O'zbekcha", "ru": "Русский", "en": "English"}
-
-    # Save to database
-    async with get_session() as session:
-        from src.repositories import UserRepository
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_user_id(db_user.user_id)
-        if user:
-            user.language = lang
-            await user_repo.save(user)
-
-    await callback.answer(f"✅ Til o'zgartirildi: {lang_names.get(lang, lang)}", show_alert=True)
-    await settings_menu(callback, db_user)
 
 
 @router.callback_query(F.data == "settings:learning_path")

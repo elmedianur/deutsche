@@ -619,12 +619,6 @@ async def settings_keyboard(settings_data: Dict[str, Any]) -> InlineKeyboardMark
     )
     builder.row(
         InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_language"),
-            callback_data="settings:language"
-        )
-    )
-    builder.row(
-        InlineKeyboardButton(
             text=await ButtonTextService.get("btn_back"),
             callback_data="menu:main"
         )
