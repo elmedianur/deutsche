@@ -546,17 +546,19 @@ async def settings_algo_compare(callback: CallbackQuery, db_user: User):
 │ 3           │ ~15 kun          │ ~8 kun           │
 │ 4           │ ~38 kun          │ ~20 kun          │
 │ 5           │ ~95 kun          │ ~50 kun          │
-│ 6           │ ~238 kun         │ ~125 kun         │
-│ Arxiv       │ 180+ kun         │ 180+ kun         │
+│ 6           │ Arxiv ✓          │ ~125 kun         │
+│ 7           │ -                │ Arxiv ✓          │
 └─────────────┴──────────────────┴──────────────────┘
 
+📌 <b>Arxiv qoidasi:</b> Interval 180+ kunga yetsa = Arxiv
+
 <b>SM-2 uchun:</b>
+✅ 5 ta muvaffaqiyatli takrorlashdan keyin arxivga
 ✅ Sekinroq, lekin puxta o'rganish
-✅ Barqaror interval o'sishi
 ✅ Klassik, sinovdan o'tgan
 
 <b>Anki uchun:</b>
-✅ Tezroq natija
+✅ 6 ta muvaffaqiyatli takrorlashdan keyin arxivga
 ✅ Easy/Hard tugmalari ta'siri kuchli
 ✅ Ko'proq moslashuvchan
 

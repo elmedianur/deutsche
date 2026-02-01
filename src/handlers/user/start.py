@@ -439,10 +439,10 @@ Omad! 🍀
 # =====================================================
 
 @router.callback_query(F.data == "quick:start")
-async def quick_start(callback: CallbackQuery, db_user: User):
+async def quick_start(callback: CallbackQuery, db_user: User, state: FSMContext):
     """Tezkor boshlash - saqlangan darajadan davom etish"""
     from src.services import quiz_service
-    from aiogram.fsm.context import FSMContext
+    from src.handlers.quiz.personal import QuizStates
 
     if not db_user.has_learning_settings:
         await callback.answer("⚙️ Avval sozlamalarni bajaring!", show_alert=True)
@@ -457,6 +457,18 @@ async def quick_start(callback: CallbackQuery, db_user: User):
             if level["id"] == db_user.current_level_id:
                 level_name = level["name"]
                 break
+
+        # FSM state'ni o'rnatish - bu juda muhim!
+        await state.clear()
+        await state.set_state(QuizStates.selecting_count)
+
+        # Kerakli ma'lumotlarni FSM state'ga saqlash
+        await state.update_data(
+            day_id=db_user.current_day_id,
+            selected_level_id=db_user.current_level_id,
+            all_days=False,
+            is_premium=db_user.is_premium
+        )
 
         # Quizga yo'naltirish (joriy kun bilan)
         from src.keyboards.inline import question_count_keyboard

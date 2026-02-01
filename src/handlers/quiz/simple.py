@@ -13,14 +13,102 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.database import get_session
 from src.database.models import User, Question
+from src.database.models.flashcard import Flashcard, UserFlashcard
 from src.services import quiz_service
-from src.repositories import QuestionRepository, ProgressRepository, StreakRepository
+from src.services.sr_algorithm import SpacedRepetitionService, Quality
+from src.repositories import QuestionRepository, ProgressRepository, StreakRepository, UserRepository
 from src.repositories.spaced_rep_repo import SpacedRepetitionRepository
+from src.repositories.flashcard_repo import UserFlashcardRepository
 from src.keyboards.inline import language_keyboard, level_keyboard, day_keyboard, back_button
 from src.core.logging import get_logger
 
 logger = get_logger(__name__)
 router = Router(name="simple_quiz")
+
+
+# ============================================================
+# FLASHCARD INTEGRATION
+# ============================================================
+
+async def update_flashcard_from_quiz(
+    session,
+    user_id: int,
+    question_text: str,
+    is_correct: bool,
+    algorithm: str = None  # None bo'lsa foydalanuvchi sozlamasidan olinadi
+) -> bool:
+    """
+    Quiz javobiga qarab UserFlashcard ni yangilash.
+
+    Agar so'z Flashcard da mavjud bo'lsa:
+    - To'g'ri javob: interval oshadi (algoritm bo'yicha)
+    - Noto'g'ri javob: interval qaytariladi
+
+    Returns: True if flashcard was updated, False otherwise
+    """
+    from sqlalchemy import select, and_
+    from datetime import date, timedelta
+
+    # Agar algoritm berilmagan bo'lsa, foydalanuvchi sozlamasidan olish
+    if algorithm is None:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(user_id)
+        algorithm = user.sr_algorithm if user else "sm2"
+
+    # Flashcard ni so'z bo'yicha topish
+    result = await session.execute(
+        select(Flashcard).where(Flashcard.front_text == question_text)
+    )
+    card = result.scalar_one_or_none()
+
+    if not card:
+        return False
+
+    # UserFlashcard ni topish
+    result = await session.execute(
+        select(UserFlashcard).where(
+            and_(
+                UserFlashcard.user_id == user_id,
+                UserFlashcard.card_id == card.id
+            )
+        )
+    )
+    user_card = result.scalar_one_or_none()
+
+    if not user_card:
+        return False
+
+    # Quality aniqlash
+    quality = Quality.GOOD if is_correct else Quality.AGAIN
+
+    # Tanlangan algoritm bilan hisoblash
+    result = SpacedRepetitionService.calculate_next_review(
+        algorithm=algorithm,
+        quality=quality,
+        current_interval=user_card.interval,
+        current_easiness=user_card.easiness_factor,
+        current_repetitions=user_card.repetitions,
+        is_learning=user_card.is_learning
+    )
+
+    # Natijalarni saqlash
+    user_card.interval = result.interval
+    user_card.easiness_factor = result.easiness
+    user_card.repetitions = result.repetitions
+    user_card.next_review_date = result.next_review
+    user_card.last_review_date = date.today()
+    user_card.total_reviews += 1
+    user_card.is_learning = not result.is_graduated
+
+    if is_correct:
+        user_card.correct_reviews += 1
+
+    # Arxivga tushish
+    if result.is_suspended:
+        user_card.is_suspended = True
+
+    await session.commit()
+    return True
 
 
 class QuizStates(StatesGroup):
@@ -250,6 +338,18 @@ async def handle_answer(callback: CallbackQuery, state: FSMContext, db_user: Use
     except Exception as e:
         logger.debug(f"SM-2 record error: {e}")
 
+    # Flashcard: Update UserFlashcard if word exists
+    try:
+        async with get_session() as session:
+            await update_flashcard_from_quiz(
+                session=session,
+                user_id=db_user.user_id,
+                question_text=q["text"],
+                is_correct=is_correct
+            )
+    except Exception as e:
+        logger.debug(f"Flashcard update error: {e}")
+
     # Show result briefly
     correct_text = q["options"][q["correct"]]
     explanation = q.get("explanation", "")
@@ -304,7 +404,19 @@ async def handle_skip(callback: CallbackQuery, state: FSMContext, db_user: User)
         "correct": q["correct"],
         "is_correct": False
     })
-    
+
+    # Flashcard: Update as wrong answer
+    try:
+        async with get_session() as session:
+            await update_flashcard_from_quiz(
+                session=session,
+                user_id=db_user.user_id,
+                question_text=q["text"],
+                is_correct=False
+            )
+    except Exception as e:
+        logger.debug(f"Flashcard update error: {e}")
+
     await callback.answer("⏭ O'tkazib yuborildi", show_alert=False)
     
     # Move to next
