@@ -172,10 +172,10 @@ So'zlarni kartochkalar yordamida o'rganing!
 
 
 @router.callback_query(F.data == "flashcard:start")
-async def flashcard_start(callback: CallbackQuery, state: FSMContext):
+async def flashcard_start(callback: CallbackQuery, state: FSMContext, db_user: User):
     """Redirect to decks - start learning"""
     callback.data = "fc:decks"
-    await show_decks(callback, state)
+    await show_decks(callback, state, db_user)
 
 
 @router.callback_query(F.data.startswith("flashcard:start:"))
@@ -238,10 +238,10 @@ async def flashcard_start_deck(callback: CallbackQuery, state: FSMContext, db_us
 
 
 @router.callback_query(F.data == "flashcard:decks")
-async def flashcard_decks(callback: CallbackQuery, state: FSMContext):
+async def flashcard_decks(callback: CallbackQuery, state: FSMContext, db_user: User):
     """Redirect to decks"""
     callback.data = "fc:decks"
-    await show_decks(callback, state)
+    await show_decks(callback, state, db_user)
 
 
 @router.callback_query(F.data == "flashcard:progress")
@@ -251,65 +251,179 @@ async def flashcard_progress(callback: CallbackQuery, db_user: User):
 
 
 @router.callback_query(F.data == "fc:decks")
-async def show_decks(callback: CallbackQuery, state: FSMContext):
-    """Deck ro'yxatini ko'rsatish - faqat sotib olingan va bepul decklar"""
-    user_id = callback.from_user.id
-    
-    from src.repositories.deck_purchase_repo import DeckPurchaseRepository
-    
-    async with get_session() as session:
-        purchase_repo = DeckPurchaseRepository(session)
-        decks_info = await purchase_repo.get_available_decks(user_id)
-    
-    # Faqat sotib olingan va bepul decklar
-    available_decks = []
-    locked_decks = []
-    
-    for info in decks_info:
-        deck = info["deck"]
-        purchased = info["purchased"]
-        
-        if purchased or not deck.is_premium:
-            available_decks.append(deck)
-        else:
-            locked_decks.append(deck)
-    
-    if not available_decks and not locked_decks:
-        await callback.answer("❌ Hozircha decklar mavjud emas!", show_alert=True)
-        return
-    
-    # Keyboard yaratish
+async def show_decks(callback: CallbackQuery, state: FSMContext, db_user: User):
+    """Deck ro'yxati - Darajalar bo'yicha"""
+    from src.database.models import Level
+    from src.database.models.language import Day
+    from sqlalchemy import select, func
+
+    level_icons = {
+        "A1": "🟢", "A2": "🟡", "B1": "🔵",
+        "B2": "🟣", "C1": "🟠", "C2": "🔴"
+    }
+
+    text = """
+🃏 <b>SO'Z KARTALARI</b>
+
+<i>Darajani tanlang va mavzularni o'rganing!</i>
+
+"""
+
     builder = InlineKeyboardBuilder()
-    
-    for deck in available_decks:
-        icon = deck.icon if hasattr(deck, 'icon') and deck.icon else "📚"
-        builder.row(
-            InlineKeyboardButton(
-                text=f"{icon} {deck.name} ({deck.cards_count} ta)",
-                callback_data=f"fc:deck:{deck.id}"
-            )
+
+    async with get_session() as session:
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        topic_repo = TopicPurchaseRepository(session)
+
+        # Get levels with active decks
+        result = await session.execute(
+            select(Level).where(Level.is_active == True).order_by(Level.display_order)
         )
-    
-    for deck in locked_decks:
-        icon = deck.icon if hasattr(deck, 'icon') and deck.icon else "📚"
-        builder.row(
-            InlineKeyboardButton(
-                text=f"🔒 {icon} {deck.name} (Premium)",
-                callback_data=f"fc:deck_locked:{deck.id}"
+        levels = result.scalars().all()
+
+        # User accessible day IDs (free + purchased)
+        free_day_ids = set(await topic_repo.get_free_day_ids())
+        purchased_day_ids = set(await topic_repo.get_purchased_day_ids(db_user.user_id))
+        accessible_ids = free_day_ids | purchased_day_ids
+
+        for level in levels:
+            # Count decks in this level
+            deck_count_result = await session.execute(
+                select(func.count(FlashcardDeck.id)).where(
+                    FlashcardDeck.level_id == level.id,
+                    FlashcardDeck.is_active == True
+                )
             )
-        )
-    
+            deck_count = deck_count_result.scalar() or 0
+
+            if deck_count == 0:
+                continue
+
+            # Count accessible decks (linked to accessible days)
+            accessible_count_result = await session.execute(
+                select(func.count(FlashcardDeck.id)).where(
+                    FlashcardDeck.level_id == level.id,
+                    FlashcardDeck.is_active == True,
+                    FlashcardDeck.day_id.in_(accessible_ids) if accessible_ids else FlashcardDeck.id == -1
+                )
+            )
+            accessible_count = accessible_count_result.scalar() or 0
+
+            icon = level_icons.get(level.name.upper().split()[0], "📚")
+
+            if accessible_count == deck_count and deck_count > 0:
+                status = "✅"
+            elif accessible_count > 0:
+                status = f"📊 {accessible_count}/{deck_count}"
+            else:
+                status = f"📚 {deck_count} ta"
+
+            builder.row(InlineKeyboardButton(
+                text=f"{icon} {level.name} — {status}",
+                callback_data=f"fc:level:{level.id}"
+            ))
+
     builder.row(InlineKeyboardButton(text="🛒 Do'kon", callback_data="shop:decks"))
     builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="flashcard:menu"))
-    
+
     await state.set_state(FlashcardStates.selecting_deck)
-    await callback.message.edit_text(
-        "🃏 <b>Deck tanlang</b>\n\n"
-        f"✅ Mavjud: {len(available_decks)} ta\n"
-        f"🔒 Premium: {len(locked_decks)} ta\n\n"
-        "O'rganmoqchi bo'lgan deckni tanlang:",
-        reply_markup=builder.as_markup()
-    )
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("fc:level:"))
+async def show_level_decks(callback: CallbackQuery, state: FSMContext, db_user: User):
+    """Daraja ichidagi mavzular (Day) - flashcard decklar bilan"""
+    from src.database.models import Level
+    from src.database.models.language import Day
+    from sqlalchemy import select
+
+    level_id = int(callback.data.split(":")[-1])
+
+    level_icons = {
+        "A1": "🟢", "A2": "🟡", "B1": "🔵",
+        "B2": "🟣", "C1": "🟠", "C2": "🔴"
+    }
+
+    async with get_session() as session:
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        topic_repo = TopicPurchaseRepository(session)
+
+        # Get level
+        level_result = await session.execute(
+            select(Level).where(Level.id == level_id)
+        )
+        level = level_result.scalar_one_or_none()
+
+        if not level:
+            await callback.answer("❌ Daraja topilmadi!", show_alert=True)
+            return
+
+        icon = level_icons.get(level.name.upper().split()[0], "📚")
+
+        # Get decks in this level with day info
+        decks_result = await session.execute(
+            select(FlashcardDeck).where(
+                FlashcardDeck.level_id == level_id,
+                FlashcardDeck.is_active == True
+            ).order_by(FlashcardDeck.display_order)
+        )
+        decks = decks_result.scalars().all()
+
+        # Get purchased day IDs
+        purchased_ids = set(await topic_repo.get_purchased_day_ids(db_user.user_id))
+
+        text = f"""
+{icon} <b>{level.name.upper()} — So'z Kartalari</b>
+
+<i>Mavzuni tanlang va o'rganishni boshlang!</i>
+
+✅ = Ochilgan | 🆓 = Bepul | 🔒 = Premium
+
+"""
+
+        builder = InlineKeyboardBuilder()
+
+        for deck in decks:
+            # Check access via day
+            if deck.day_id:
+                day_result = await session.execute(
+                    select(Day).where(Day.id == deck.day_id)
+                )
+                day = day_result.scalar_one_or_none()
+
+                is_purchased = deck.day_id in purchased_ids
+                is_free = day and not day.is_premium and day.price == 0
+
+                if is_purchased or is_free:
+                    status = "✅"
+                    cb = f"fc:deck:{deck.id}"
+                else:
+                    status = "🔒"
+                    cb = f"fc:deck_locked:{deck.id}"
+
+                display = day.display_name if day else deck.name
+            else:
+                # Deck without day link - use old logic
+                if not deck.is_premium:
+                    status = "✅"
+                    cb = f"fc:deck:{deck.id}"
+                else:
+                    status = "🔒"
+                    cb = f"fc:deck_locked:{deck.id}"
+                display = deck.name
+
+            builder.row(InlineKeyboardButton(
+                text=f"{status} {display} ({deck.cards_count} ta)",
+                callback_data=cb
+            ))
+
+        if not decks:
+            text += "\n<i>Bu darajada decklar yo'q.</i>\n"
+
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="fc:decks"))
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
 
 
@@ -317,7 +431,7 @@ async def show_decks(callback: CallbackQuery, state: FSMContext):
 async def deck_locked(callback: CallbackQuery):
     """Premium deck - sotib olish kerak"""
     await callback.answer(
-        "🔒 Bu premium deck! Do'kondan sotib oling.",
+        "🔒 Bu mavzuni avval do'kondan sotib oling!",
         show_alert=True
     )
 
