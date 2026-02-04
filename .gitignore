@@ -51,3 +51,9 @@ build/
 
 # Other
 ql -h localhost -U quiz_user -d quiz_bot -c %22
+
+# Seed/script fayllar
+seed*.py
+check_status.py
+populate_flashcards.py
+deck_info.txt
