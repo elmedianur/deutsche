@@ -97,7 +97,8 @@ async def init_database() -> None:
         Achievement, UserAchievement, Referral,
         Subscription, Payment, FlashcardDeck,
         Flashcard, UserFlashcard, Tournament,
-        TournamentParticipant, RequiredChannel, BotSettings
+        TournamentParticipant, RequiredChannel, BotSettings,
+        UserTopicPurchase
     )
     
     engine = get_engine()

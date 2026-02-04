@@ -669,80 +669,42 @@ def get_shop_header() -> str:
 """
 
 
-async def shop_menu_keyboard() -> InlineKeyboardMarkup:
-    """Asosiy market menyusi - DINAMIK TUGMALAR"""
-    from src.services.button_service import ButtonTextService
-
+def shop_menu_keyboard() -> InlineKeyboardMarkup:
+    """Asosiy market menyusi"""
     builder = InlineKeyboardBuilder()
 
     # Kategoriyalar - 2 tadan
     builder.row(
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_boost"),
-            callback_data="shop:cat:boost"
-        ),
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_protection"),
-            callback_data="shop:cat:protection"
-        )
+        InlineKeyboardButton(text="🚀 Boost", callback_data="shop:cat:boost"),
+        InlineKeyboardButton(text="🛡️ Himoya", callback_data="shop:cat:protection")
     )
     builder.row(
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_help"),
-            callback_data="shop:cat:help"
-        ),
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_content"),
-            callback_data="shop:cat:content"
-        )
+        InlineKeyboardButton(text="💡 Yordam", callback_data="shop:cat:help"),
+        InlineKeyboardButton(text="📚 Kontent", callback_data="shop:cat:content")
     )
     builder.row(
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_cosmetic"),
-            callback_data="shop:cat:cosmetic"
-        ),
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_special"),
-            callback_data="shop:cat:special"
-        )
+        InlineKeyboardButton(text="🎨 Kosmetik", callback_data="shop:cat:cosmetic"),
+        InlineKeyboardButton(text="🎁 Maxsus", callback_data="shop:cat:special")
     )
 
     # Maxsus bo'limlar
     builder.row(
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_bundles"),
-            callback_data="shop:bundles"
-        )
+        InlineKeyboardButton(text="🎊 CHEGIRMALAR (51% gacha!)", callback_data="shop:bundles")
     )
     builder.row(
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_daily"),
-            callback_data="shop:daily"
-        ),
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_popular"),
-            callback_data="shop:popular"
-        )
+        InlineKeyboardButton(text="⭐ Kunlik Taklif", callback_data="shop:daily"),
+        InlineKeyboardButton(text="🔥 Ommabop", callback_data="shop:popular")
     )
     builder.row(
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_decks"),
-            callback_data="shop:decks"
-        )
+        InlineKeyboardButton(text="🃏 So'z Kartalari", callback_data="shop:decks")
     )
 
     # Inventar va orqaga
     builder.row(
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_shop_inventory"),
-            callback_data="shop:inventory"
-        )
+        InlineKeyboardButton(text="📦 Mening Inventarim", callback_data="shop:inventory")
     )
     builder.row(
-        InlineKeyboardButton(
-            text=await ButtonTextService.get("btn_back"),
-            callback_data="menu:main"
-        )
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data="menu:main")
     )
 
     return builder.as_markup()
@@ -769,7 +731,7 @@ async def shop_menu(callback: CallbackQuery):
 💳 <b>To'lov:</b> Telegram Stars ⭐
 """
 
-    await callback.message.edit_text(text, reply_markup=await shop_menu_keyboard())
+    await callback.message.edit_text(text, reply_markup=shop_menu_keyboard())
     await callback.answer()
 
 
@@ -1029,7 +991,11 @@ async def shop_pre_checkout(pre_checkout: PreCheckoutQuery):
     await pre_checkout.answer(ok=True)
 
 
-@router.message(F.successful_payment)
+@router.message(
+    F.successful_payment.invoice_payload.startswith("shop:") |
+    F.successful_payment.invoice_payload.startswith("bundle:") |
+    F.successful_payment.invoice_payload.startswith("daily:")
+)
 async def shop_successful_payment(message: Message, db_user: User):
     """Muvaffaqiyatli to'lov"""
     payment = message.successful_payment
@@ -1103,19 +1069,80 @@ Rahmat xaridingiz uchun! 🙏
 
 @router.callback_query(F.data == "shop:inventory")
 async def show_inventory(callback: CallbackQuery, db_user: User):
-    """Inventarni ko'rsatish"""
+    """Inventar - sotib olingan mavzular daraja bo'yicha"""
+    from src.database import get_session
+    from src.database.models import Level
+    from src.database.models.subscription import UserTopicPurchase
+    from src.database.models.language import Day
+    from sqlalchemy import select, func, and_
+
     text = """
 ╔═══════════════════════════════════╗
 ║       📦 MENING INVENTARIM       ║
 ╚═══════════════════════════════════╝
 
+<i>Sotib olingan mavzularingiz:</i>
+
 """
 
-    # TODO: Real inventar ma'lumotlari
-    text += "<i>Inventaringiz bo'sh.</i>\n\n"
-    text += "<i>Do'kondan mahsulot sotib oling!</i>"
-
     builder = InlineKeyboardBuilder()
+
+    level_icons = {
+        "A1": "🟢", "A2": "🟡", "B1": "🔵",
+        "B2": "🟣", "C1": "🟠", "C2": "🔴"
+    }
+
+    has_purchases = False
+
+    async with get_session() as session:
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        repo = TopicPurchaseRepository(session)
+
+        # Get purchases grouped by level
+        purchased_days = await repo.get_purchased_days_by_level(db_user.user_id)
+
+        # Also include free days that user has access to
+        free_days_result = await session.execute(
+            select(Day).where(
+                and_(
+                    Day.is_active == True,
+                    Day.is_premium == False,
+                    Day.price == 0
+                )
+            ).order_by(Day.day_number)
+        )
+        free_days = free_days_result.scalars().all()
+
+        # Merge free days into grouped (by ID to avoid duplicates)
+        for day in free_days:
+            if day.level_id not in purchased_days:
+                purchased_days[day.level_id] = []
+            existing_ids = {d.id for d in purchased_days[day.level_id]}
+            if day.id not in existing_ids:
+                purchased_days[day.level_id].append(day)
+
+        if purchased_days:
+            # Get level info ordered by display_order
+            level_ids = list(purchased_days.keys())
+            levels_result = await session.execute(
+                select(Level).where(Level.id.in_(level_ids)).order_by(Level.display_order)
+            )
+            levels_ordered = levels_result.scalars().all()
+
+            for level in levels_ordered:
+                icon = level_icons.get(level.name.upper().split()[0], "📚")
+                day_count = len(purchased_days[level.id])
+                has_purchases = True
+
+                builder.row(InlineKeyboardButton(
+                    text=f"{icon} {level.name} — {day_count} ta mavzu",
+                    callback_data=f"shop:inv_level:{level.id}"
+                ))
+
+    if not has_purchases:
+        text += "<i>Inventaringiz bo'sh.</i>\n\n"
+        text += "<i>Do'kondan mavzu sotib oling!</i>"
+
     builder.row(InlineKeyboardButton(text="🛒 Do'kon", callback_data="shop:menu"))
     builder.row(InlineKeyboardButton(text="🏠 Menyu", callback_data="menu:main"))
 
@@ -1124,14 +1151,15 @@ async def show_inventory(callback: CallbackQuery, db_user: User):
 
 
 # ╔══════════════════════════════════════════════════════════════════╗
-# ║                    🃏 SO'Z KARTALARI                             ║
+# ║                    🃏 SO'Z KARTALARI (Day-based)                ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 @router.callback_query(F.data == "shop:decks")
 async def shop_decks_levels(callback: CallbackQuery, db_user: User):
-    """So'z kartalari do'koni - Avval darajalar ko'rsatiladi"""
+    """So'z kartalari do'koni - Darajalar ro'yxati (Day soni bilan)"""
     from src.database import get_session
-    from src.database.models import Level, FlashcardDeck, UserDeckPurchase
+    from src.database.models import Level
+    from src.database.models.language import Day
     from sqlalchemy import select, func
 
     text = """
@@ -1146,61 +1174,58 @@ async def shop_decks_levels(callback: CallbackQuery, db_user: User):
 
     builder = InlineKeyboardBuilder()
 
-    # Level icons
     level_icons = {
         "A1": "🟢", "A2": "🟡", "B1": "🔵",
         "B2": "🟣", "C1": "🟠", "C2": "🔴"
     }
 
     async with get_session() as session:
-        # Get levels with deck count
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        repo = TopicPurchaseRepository(session)
+
+        # Get levels with active days
         result = await session.execute(
             select(Level).where(Level.is_active == True).order_by(Level.display_order)
         )
         levels = result.scalars().all()
 
-        # Get purchased deck count per level
-        purchased_result = await session.execute(
-            select(UserDeckPurchase.deck_id).where(
-                UserDeckPurchase.user_id == db_user.user_id,
-                UserDeckPurchase.is_active == True
-            )
-        )
-        purchased_ids = set(r[0] for r in purchased_result.all())
+        # Get free day IDs
+        free_day_ids = set(await repo.get_free_day_ids())
+        purchased_day_ids = set(await repo.get_purchased_day_ids(db_user.user_id))
+        # Combine: user has access to free + purchased
+        accessible_ids = free_day_ids | purchased_day_ids
 
         for level in levels:
-            # Count decks in this level
-            deck_result = await session.execute(
-                select(func.count(FlashcardDeck.id)).where(
-                    FlashcardDeck.level_id == level.id,
-                    FlashcardDeck.is_active == True
+            # Count days in this level
+            day_result = await session.execute(
+                select(func.count(Day.id)).where(
+                    Day.level_id == level.id,
+                    Day.is_active == True
                 )
             )
-            deck_count = deck_result.scalar() or 0
+            day_count = day_result.scalar() or 0
 
-            if deck_count == 0:
+            if day_count == 0:
                 continue
 
-            # Count purchased decks in this level
-            purchased_in_level = await session.execute(
-                select(func.count(FlashcardDeck.id)).where(
-                    FlashcardDeck.level_id == level.id,
-                    FlashcardDeck.is_active == True,
-                    FlashcardDeck.id.in_(purchased_ids) if purchased_ids else False
+            # Count accessible days in this level
+            accessible_in_level = await session.execute(
+                select(func.count(Day.id)).where(
+                    Day.level_id == level.id,
+                    Day.is_active == True,
+                    Day.id.in_(accessible_ids) if accessible_ids else Day.id == -1
                 )
             )
-            purchased_count = purchased_in_level.scalar() or 0
+            accessible_count = accessible_in_level.scalar() or 0
 
-            # Icon for level
             icon = level_icons.get(level.name.upper().split()[0], "📚")
 
-            # Status text
-            if purchased_count == deck_count and deck_count > 0:
+            if accessible_count == day_count and day_count > 0:
                 status = "✅"
-            elif purchased_count > 0:
-                status = f"📊 {purchased_count}/{deck_count}"
+            elif accessible_count > 0:
+                status = f"📊 {accessible_count}/{day_count}"
             else:
-                status = f"📚 {deck_count} ta"
+                status = f"📚 {day_count} ta"
 
             builder.row(InlineKeyboardButton(
                 text=f"{icon} {level.name} — {status}",
@@ -1218,15 +1243,18 @@ async def shop_decks_levels(callback: CallbackQuery, db_user: User):
 
 @router.callback_query(F.data.startswith("shop:decks_level:"))
 async def shop_decks_by_level(callback: CallbackQuery, db_user: User):
-    """Daraja ichidagi mavzular (decklar)"""
+    """Daraja ichidagi mavzular (Day obyektlari, narx/holat bilan)"""
     from src.database import get_session
-    from src.database.models import Level, FlashcardDeck, UserDeckPurchase
+    from src.database.models import Level
+    from src.database.models.language import Day
     from sqlalchemy import select
 
     level_id = int(callback.data.split(":")[-1])
 
     async with get_session() as session:
-        # Get level info
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        repo = TopicPurchaseRepository(session)
+
         level_result = await session.execute(
             select(Level).where(Level.id == level_id)
         )
@@ -1236,7 +1264,6 @@ async def shop_decks_by_level(callback: CallbackQuery, db_user: User):
             await callback.answer("❌ Daraja topilmadi!", show_alert=True)
             return
 
-        # Level icons
         level_icons = {
             "A1": "🟢", "A2": "🟡", "B1": "🔵",
             "B2": "🟣", "C1": "🟠", "C2": "🔴"
@@ -1248,56 +1275,46 @@ async def shop_decks_by_level(callback: CallbackQuery, db_user: User):
 ║   {icon} {level.name.upper()} MAVZULARI {icon}
 ╚═══════════════════════════════════╝
 
-<i>Mavzuni sotib oling - Quiz va Flashcard birga ochiladi!</i>
+<i>Mavzuni tanlang - Quiz va Flashcard birga ochiladi!</i>
 
-✅ = Sotib olingan
-🆓 = Bepul
-⭐ = Premium
+✅ = Sotib olingan | 🆓 = Bepul | ⭐ = Premium
 
 """
 
         builder = InlineKeyboardBuilder()
 
-        # Get decks in this level
+        # Get days in this level
         result = await session.execute(
-            select(FlashcardDeck).where(
-                FlashcardDeck.level_id == level_id,
-                FlashcardDeck.is_active == True
-            ).order_by(FlashcardDeck.display_order)
+            select(Day).where(
+                Day.level_id == level_id,
+                Day.is_active == True
+            ).order_by(Day.day_number)
         )
-        decks = result.scalars().all()
+        days = result.scalars().all()
 
-        # Get user's purchased decks
-        purchased_result = await session.execute(
-            select(UserDeckPurchase.deck_id).where(
-                UserDeckPurchase.user_id == db_user.user_id,
-                UserDeckPurchase.is_active == True
-            )
-        )
-        purchased_ids = [r[0] for r in purchased_result.all()]
+        # Get purchased day IDs
+        purchased_ids = set(await repo.get_purchased_day_ids(db_user.user_id))
 
-        for deck in decks:
-            is_purchased = deck.id in purchased_ids
-            is_free = not deck.is_premium or deck.price == 0
+        for day in days:
+            is_purchased = day.id in purchased_ids
+            is_free = not day.is_premium and day.price == 0
 
             if is_purchased:
                 status = "✅"
-                action = f"shop:deck_info:{deck.id}"
             elif is_free:
                 status = "🆓"
-                action = f"shop:deck_info:{deck.id}"
             else:
                 status = "⭐"
-                action = f"shop:deck_info:{deck.id}"
 
-            price_text = f" — {deck.price}⭐" if deck.is_premium and deck.price > 0 and not is_purchased else ""
+            price_text = f" — {day.price}⭐" if day.is_premium and day.price > 0 and not is_purchased else ""
+            display = day.display_name
 
             builder.row(InlineKeyboardButton(
-                text=f"{status} {deck.icon or '📚'} {deck.name}{price_text}",
-                callback_data=action
+                text=f"{status} {display}{price_text}",
+                callback_data=f"shop:topic_info:{day.id}"
             ))
 
-        if not decks:
+        if not days:
             text += "\n<i>Bu darajada mavzular yo'q.</i>\n"
 
     builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="shop:decks"))
@@ -1306,59 +1323,79 @@ async def shop_decks_by_level(callback: CallbackQuery, db_user: User):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("shop:deck_info:"))
-async def deck_info(callback: CallbackQuery, db_user: User):
-    """Deck haqida to'liq ma'lumot"""
+@router.callback_query(F.data.startswith("shop:topic_info:"))
+async def topic_info(callback: CallbackQuery, db_user: User):
+    """Mavzu tafsilotlari + Sotib olish yoki Quiz/Flashcard tugmalari"""
     from src.database import get_session
-    from src.database.models import FlashcardDeck, UserDeckPurchase, Level, Flashcard
+    from src.database.models import Level, FlashcardDeck, Question
+    from src.database.models.language import Day
     from sqlalchemy import select, func
 
-    deck_id = int(callback.data.split(":")[-1])
+    day_id = int(callback.data.split(":")[-1])
 
     async with get_session() as session:
-        result = await session.execute(
-            select(FlashcardDeck).where(FlashcardDeck.id == deck_id)
-        )
-        deck = result.scalar_one_or_none()
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        repo = TopicPurchaseRepository(session)
 
-        if not deck:
+        # Get day info
+        day_result = await session.execute(
+            select(Day).where(Day.id == day_id)
+        )
+        day = day_result.scalar_one_or_none()
+
+        if not day:
             await callback.answer("❌ Mavzu topilmadi!", show_alert=True)
             return
 
         # Get level info
         level = None
         level_icon = "📚"
-        if deck.level_id:
+        if day.level_id:
             level_result = await session.execute(
-                select(Level).where(Level.id == deck.level_id)
+                select(Level).where(Level.id == day.level_id)
             )
             level = level_result.scalar_one_or_none()
-            level_icons = {"A1": "🟢", "A2": "🟡", "B1": "🔵", "B2": "🟣", "C1": "🟠", "C2": "🔴", "PREMIUM": "💎"}
+            level_icons = {"A1": "🟢", "A2": "🟡", "B1": "🔵", "B2": "🟣", "C1": "🟠", "C2": "🔴"}
             if level:
                 level_icon = level_icons.get(level.name.upper().split()[0], "📚")
 
-        # Get actual card count
-        card_count_result = await session.execute(
-            select(func.count(Flashcard.id)).where(
-                Flashcard.deck_id == deck_id,
-                Flashcard.is_active == True
+        # Count questions
+        q_count_result = await session.execute(
+            select(func.count(Question.id)).where(
+                Question.day_id == day_id,
+                Question.is_active == True
             )
         )
-        actual_card_count = card_count_result.scalar() or 0
+        question_count = q_count_result.scalar() or 0
 
-        # Check if purchased
-        result = await session.execute(
-            select(UserDeckPurchase).where(
-                UserDeckPurchase.user_id == db_user.user_id,
-                UserDeckPurchase.deck_id == deck_id
+        # Find linked flashcard deck
+        deck_result = await session.execute(
+            select(FlashcardDeck).where(
+                FlashcardDeck.day_id == day_id,
+                FlashcardDeck.is_active == True
             )
         )
-        is_purchased = result.scalar_one_or_none() is not None
-        is_free = not deck.is_premium or deck.price == 0
+        deck = deck_result.scalar_one_or_none()
+        card_count = 0
+        if deck:
+            from src.database.models import Flashcard
+            cc_result = await session.execute(
+                select(func.count(Flashcard.id)).where(
+                    Flashcard.deck_id == deck.id,
+                    Flashcard.is_active == True
+                )
+            )
+            card_count = cc_result.scalar() or 0
 
-    # Status badge
-    if is_purchased:
-        status_badge = "✅ SOTIB OLINGAN"
+        # Check access
+        has_access = await repo.has_topic_access(db_user.user_id, day_id)
+        is_free = not day.is_premium and day.price == 0
+
+    # Build text
+    level_name = level.name if level else "Umumiy"
+
+    if has_access:
+        status_badge = "✅ OCHILGAN"
         price_section = ""
     elif is_free:
         status_badge = "🆓 BEPUL"
@@ -1367,13 +1404,11 @@ async def deck_info(callback: CallbackQuery, db_user: User):
         status_badge = "⭐ PREMIUM"
         price_section = f"""
 ┌─────────────────────────────────┐
-│  💰 <b>NARXI:</b> {deck.price} ⭐ (Stars)
+│  💰 <b>NARXI:</b> {day.price} ⭐ (Stars)
 │  💳 Telegram Stars orqali to'lov
 └─────────────────────────────────┘
 """
 
-    # Level description for usage
-    level_name = level.name if level else "Umumiy"
     usage_tips = {
         "A1": "🎯 Kundalik oddiy muloqot, do'konda, ko'chada",
         "A2": "🎯 Do'stlar bilan suhbat, sayohat, xizmatlar",
@@ -1381,63 +1416,71 @@ async def deck_info(callback: CallbackQuery, db_user: User):
         "B2": "🎯 Murakkab mavzular, taqdimotlar, munozaralar",
         "C1": "🎯 Akademik muhit, professional soha, adabiyot",
         "C2": "🎯 Ona tili darajasida erkin muloqot",
-        "PREMIUM": "🎯 Imtihonlarga tayyorgarlik, maxsus lug'at"
     }
     usage = usage_tips.get(level_name.upper().split()[0], "🎯 Kundalik muloqotda ishlatish mumkin")
 
-    # What user will learn
-    learn_section = f"""
-📖 <b>NIMALARNI O'RGANASIZ:</b>
-├ 🔤 {actual_card_count} ta so'z va ibora
-├ 🗣 To'g'ri talaffuz (audio bilan)
-├ 📝 Grammatik qoidalar
-├ 💡 Amaliy misollar
-└ 🎯 Real vaziyatlarda qo'llash
-"""
-
     text = f"""
 ╔═══════════════════════════════════╗
-║  {level_icon} <b>{deck.name}</b>
+║  {level_icon} <b>{day.display_name}</b>
 ╚═══════════════════════════════════╝
 
 {status_badge}
 
 📋 <b>TAVSIF:</b>
-{deck.description or "Bu mavzuda nemis tilining muhim so'z va iboralarini o'rganasiz."}
+{day.description or day.topic or "Bu mavzuda nemis tilining muhim so'z va iboralarini o'rganasiz."}
 
-{learn_section}
+📖 <b>NIMALARNI O'RGANASIZ:</b>
+├ 📝 {question_count} ta test savol
+├ 🃏 {card_count} ta so'z kartasi
+├ 🗣 To'g'ri talaffuz
+├ 💡 Amaliy misollar
+└ 🎯 Real vaziyatlarda qo'llash
+
 🌍 <b>QAYERDA QO'LLAYSIZ:</b>
 {usage}
 
 📊 <b>STATISTIKA:</b>
-├ 📚 So'zlar soni: <b>{actual_card_count}</b> ta
-├ 👥 O'rganuvchilar: <b>{deck.users_studying or 0}</b> ta
-├ 📈 Daraja: <b>{level_name}</b>
-└ ⏱ Taxminiy vaqt: <b>{actual_card_count * 2}</b> daqiqa
+├ 📝 Savollar: <b>{question_count}</b> ta
+├ 🃏 Kartalar: <b>{card_count}</b> ta
+└ 📈 Daraja: <b>{level_name}</b>
 {price_section}
 <b>SOTIB OLSANGIZ:</b>
 ✅ Quiz testlari ochiladi
 ✅ Flashcard kartalari ochiladi
-✅ Audio talaffuzlar
 ✅ Cheksiz takrorlash
 """
 
     builder = InlineKeyboardBuilder()
 
-    if is_purchased or is_free:
+    if has_access:
+        # Already accessible - show Quiz and Flashcard buttons
         builder.row(
-            InlineKeyboardButton(text="🃏 Flashcard", callback_data=f"flashcard:start:{deck_id}"),
-            InlineKeyboardButton(text="📝 Quiz", callback_data=f"quiz:day:{deck.day_id}" if deck.day_id else "noop")
+            InlineKeyboardButton(text="📝 Quiz boshlash", callback_data=f"quiz:day:{day_id}"),
         )
-    else:
+        if deck:
+            builder.row(
+                InlineKeyboardButton(text="🃏 Flashcard boshlash", callback_data=f"flashcard:start:{deck.id}"),
+            )
+    elif is_free:
+        # Free - get it button
         builder.row(InlineKeyboardButton(
-            text=f"💳 Sotib olish — {deck.price} ⭐",
-            callback_data=f"shop:deck_buy:{deck_id}"
+            text="🆓 Bepul olish",
+            callback_data=f"shop:topic_get_free:{day_id}"
+        ))
+    else:
+        # Paid - show purchase options
+        builder.row(InlineKeyboardButton(
+            text=f"⭐ {day.price} Stars bilan sotib olish",
+            callback_data=f"shop:topic_buy_stars:{day_id}"
+        ))
+        builder.row(InlineKeyboardButton(
+            text=f"💳 Telegram Stars bilan sotib olish",
+            callback_data=f"shop:topic_buy_telegram:{day_id}"
         ))
 
-    # Back button - go to level if available
-    if deck.level_id:
-        builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data=f"shop:decks_level:{deck.level_id}"))
+    # Back to level
+    if day.level_id:
+        builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data=f"shop:decks_level:{day.level_id}"))
     else:
         builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="shop:decks"))
 
@@ -1445,115 +1488,412 @@ async def deck_info(callback: CallbackQuery, db_user: User):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("shop:deck_buy:"))
-async def deck_buy(callback: CallbackQuery, bot: Bot):
-    """Deck sotib olish - Quiz va Flashcard birga"""
+@router.callback_query(F.data.startswith("shop:topic_get_free:"))
+async def topic_get_free(callback: CallbackQuery, db_user: User):
+    """Bepul mavzuni olish"""
     from src.database import get_session
-    from src.database.models import FlashcardDeck
+    from src.database.models.language import Day
     from sqlalchemy import select
 
-    deck_id = int(callback.data.split(":")[-1])
+    day_id = int(callback.data.split(":")[-1])
 
     async with get_session() as session:
-        result = await session.execute(
-            select(FlashcardDeck).where(FlashcardDeck.id == deck_id)
-        )
-        deck = result.scalar_one_or_none()
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        repo = TopicPurchaseRepository(session)
 
-    if not deck:
-        await callback.answer("❌ Mavzu topilmadi!", show_alert=True)
+        # Get day
+        day_result = await session.execute(
+            select(Day).where(Day.id == day_id)
+        )
+        day = day_result.scalar_one_or_none()
+
+        if not day:
+            await callback.answer("❌ Mavzu topilmadi!", show_alert=True)
+            return
+
+        if day.is_premium or day.price > 0:
+            await callback.answer("❌ Bu mavzu bepul emas!", show_alert=True)
+            return
+
+        # Already have access?
+        if await repo.has_purchased(db_user.user_id, day_id):
+            await callback.answer("Siz allaqachon bu mavzuga ega ekansiz!", show_alert=True)
+            return
+
+        # Create purchase record for free topic
+        await repo.purchase_topic(
+            user_id=db_user.user_id,
+            day_id=day_id,
+            price_paid=0,
+            payment_method="free"
+        )
+        await session.commit()
+
+    await callback.answer("✅ Mavzu inventaringizga qo'shildi!", show_alert=True)
+
+    # Refresh topic info page
+    callback.data = f"shop:topic_info:{day_id}"
+    await topic_info(callback, db_user)
+
+
+@router.callback_query(F.data.startswith("shop:topic_buy_stars:"))
+async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
+    """Virtual yulduz (in-app stars) bilan mavzu sotib olish"""
+    from src.database import get_session
+    from src.database.models.language import Day
+    from src.database.models import User as UserModel
+    from sqlalchemy import select
+
+    day_id = int(callback.data.split(":")[-1])
+
+    async with get_session() as session:
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        repo = TopicPurchaseRepository(session)
+
+        # Get day
+        day_result = await session.execute(
+            select(Day).where(Day.id == day_id)
+        )
+        day = day_result.scalar_one_or_none()
+
+        if not day:
+            await callback.answer("❌ Mavzu topilmadi!", show_alert=True)
+            return
+
+        # Already purchased?
+        if await repo.has_topic_access(db_user.user_id, day_id):
+            await callback.answer("Siz allaqachon bu mavzuga kirishingiz mumkin!", show_alert=True)
+            return
+
+        # Fetch fresh user from DB for accurate balance
+        fresh_user_result = await session.execute(
+            select(UserModel).where(UserModel.user_id == db_user.user_id)
+        )
+        fresh_user = fresh_user_result.scalar_one_or_none()
+
+        if not fresh_user:
+            await callback.answer("❌ Foydalanuvchi topilmadi!", show_alert=True)
+            return
+
+        # Check balance
+        price = day.price
+        current_stars = fresh_user.stars or 0
+        if current_stars < price:
+            await callback.answer(
+                f"❌ Yetarli stars yo'q!\n\nKerak: {price}⭐\nBalans: {current_stars}⭐\n\nTelegram Stars bilan sotib olishga urinib ko'ring!",
+                show_alert=True
+            )
+            return
+
+        # Deduct stars from fresh DB object
+        success = fresh_user.remove_stars(price)
+        if not success:
+            await callback.answer("❌ Balans yetarli emas!", show_alert=True)
+            return
+
+        # Create purchase
+        await repo.purchase_topic(
+            user_id=db_user.user_id,
+            day_id=day_id,
+            price_paid=price,
+            payment_method="stars"
+        )
+        await session.commit()
+
+        # Update in-memory db_user so UI reflects change
+        db_user.stars = fresh_user.stars
+
+    await callback.answer(f"✅ Mavzu sotib olindi! (-{price}⭐)", show_alert=True)
+    logger.info(f"Topic purchase (stars): user={db_user.user_id}, day={day_id}, price={price}")
+
+    # Refresh topic info page
+    callback.data = f"shop:topic_info:{day_id}"
+    await topic_info(callback, db_user)
+
+
+@router.callback_query(F.data.startswith("shop:topic_buy_telegram:"))
+async def topic_buy_with_telegram_stars(callback: CallbackQuery, db_user: User, bot: Bot):
+    """Telegram Stars (real payment) bilan mavzu sotib olish"""
+    from src.database import get_session
+    from src.database.models.language import Day
+    from sqlalchemy import select
+
+    day_id = int(callback.data.split(":")[-1])
+
+    async with get_session() as session:
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        repo = TopicPurchaseRepository(session)
+
+        day_result = await session.execute(
+            select(Day).where(Day.id == day_id)
+        )
+        day = day_result.scalar_one_or_none()
+
+        if not day:
+            await callback.answer("❌ Mavzu topilmadi!", show_alert=True)
+            return
+
+        if await repo.has_topic_access(db_user.user_id, day_id):
+            await callback.answer("Siz allaqachon bu mavzuga kirishingiz mumkin!", show_alert=True)
+            return
+
+    price = day.price
+    if price <= 0:
+        await callback.answer("Bu mavzu bepul!", show_alert=True)
         return
 
     try:
         await bot.send_invoice(
             chat_id=callback.message.chat.id,
-            title=f"📚 {deck.name}",
-            description=f"{deck.description or 'Premium mavzu'}\n\n✅ Quiz + Flashcard birga ochiladi!",
-            payload=f"deck:{deck_id}",
+            title=f"📚 {day.display_name}",
+            description=f"{day.description or day.topic or 'Premium mavzu'}\n\n✅ Quiz + Flashcard birga ochiladi!",
+            payload=f"topic:{day_id}",
             currency="XTR",
-            prices=[LabeledPrice(label=deck.name, amount=deck.price)]
+            prices=[LabeledPrice(label=day.display_name, amount=price)]
         )
         await callback.answer()
     except Exception as e:
-        logger.error(f"Deck invoice error: {e}")
+        logger.error(f"Topic invoice error: {e}")
         await callback.answer("❌ Xatolik!", show_alert=True)
 
 
-@router.pre_checkout_query(F.invoice_payload.startswith("deck:"))
-async def deck_pre_checkout(pre_checkout: PreCheckoutQuery):
-    """Deck to'lov tasdiqlash"""
+@router.pre_checkout_query(F.invoice_payload.startswith("topic:"))
+async def topic_pre_checkout(pre_checkout: PreCheckoutQuery):
+    """Topic to'lov tasdiqlash"""
     await pre_checkout.answer(ok=True)
 
 
-@router.message(F.successful_payment.invoice_payload.startswith("deck:"))
-async def deck_successful_payment(message: Message, db_user: User):
-    """Deck sotib olish - Quiz va Flashcard birga ochiladi"""
+@router.message(F.successful_payment.invoice_payload.startswith("topic:"))
+async def topic_successful_payment(message: Message, db_user: User):
+    """Muvaffaqiyatli topic to'lovi"""
     from src.database import get_session
-    from src.database.models import FlashcardDeck, UserDeckPurchase
+    from src.database.models.language import Day
+    from src.database.models import FlashcardDeck
     from sqlalchemy import select
 
     payload = message.successful_payment.invoice_payload
-    deck_id = int(payload.split(":")[-1])
+    day_id = int(payload.split(":")[-1])
     price = message.successful_payment.total_amount
+    charge_id = message.successful_payment.telegram_payment_charge_id
 
     try:
         async with get_session() as session:
-            # Get deck with day_id
-            result = await session.execute(
-                select(FlashcardDeck).where(FlashcardDeck.id == deck_id)
+            from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+            repo = TopicPurchaseRepository(session)
+
+            # Get day info
+            day_result = await session.execute(
+                select(Day).where(Day.id == day_id)
             )
-            deck = result.scalar_one_or_none()
+            day = day_result.scalar_one_or_none()
 
-            if deck:
-                # Check if already purchased
-                result = await session.execute(
-                    select(UserDeckPurchase).where(
-                        UserDeckPurchase.user_id == db_user.user_id,
-                        UserDeckPurchase.deck_id == deck_id
-                    )
+            if day:
+                # Create purchase record
+                await repo.purchase_topic(
+                    user_id=db_user.user_id,
+                    day_id=day_id,
+                    price_paid=price,
+                    payment_method="telegram_stars",
+                    telegram_payment_id=charge_id
                 )
-                existing = result.scalar_one_or_none()
+                await session.commit()
 
-                if not existing:
-                    # Create purchase record
-                    purchase = UserDeckPurchase(
-                        user_id=db_user.user_id,
-                        deck_id=deck_id,
-                        price_paid=price,
-                        is_active=True
-                    )
-                    session.add(purchase)
+                # Find linked deck for flashcard button
+                deck_result = await session.execute(
+                    select(FlashcardDeck).where(FlashcardDeck.day_id == day_id)
+                )
+                deck = deck_result.scalar_one_or_none()
 
-                    # Update deck users_studying count
-                    deck.users_studying += 1
-
-                    await session.commit()
-
-                # Response message
-                day_info = ""
-                if deck.day_id:
-                    day_info = "\n✅ Quiz savollari ham ochildi!"
+                buttons = [
+                    [InlineKeyboardButton(text="📝 Quiz boshlash", callback_data=f"quiz:day:{day_id}")]
+                ]
+                if deck:
+                    buttons.append([InlineKeyboardButton(text="🃏 Flashcard boshlash", callback_data=f"flashcard:start:{deck.id}")])
+                buttons.append([InlineKeyboardButton(text="📦 Inventar", callback_data="shop:inventory")])
+                buttons.append([InlineKeyboardButton(text="🛒 Do'kon", callback_data="shop:menu")])
 
                 await message.answer(
                     f"""
 🎉 <b>Xarid muvaffaqiyatli!</b>
 
-📚 <b>{deck.name}</b>
+📚 <b>{day.display_name}</b>
 
-✅ Flashcard kartalari ochildi!{day_info}
+✅ Quiz testlari ochildi!
+✅ Flashcard kartalari ochildi!
 
 Endi bu mavzuni Quiz va Flashcard orqali o'rganishingiz mumkin!
 """,
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="🃏 Flashcard boshlash", callback_data=f"flashcard:start:{deck_id}")],
-                        [InlineKeyboardButton(text="🛒 Do'kon", callback_data="shop:menu")],
-                        [InlineKeyboardButton(text="🏠 Menyu", callback_data="menu:main")]
-                    ])
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
                 )
-                logger.info(f"Deck purchase: user={db_user.user_id}, deck={deck_id}, day_id={deck.day_id}")
+                logger.info(f"Topic purchase (telegram): user={db_user.user_id}, day={day_id}, price={price}")
             else:
-                await message.answer("❌ Deck topilmadi!")
+                await message.answer("❌ Mavzu topilmadi!")
 
     except Exception as e:
-        logger.error(f"Deck payment error: {e}")
+        logger.error(f"Topic payment error: {e}")
         await message.answer("❌ Xatolik yuz berdi. Admin bilan bog'laning.")
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║                    📦 INVENTAR ICHKI SAHIFALARI                  ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+@router.callback_query(F.data.startswith("shop:inv_level:"))
+async def inventory_level(callback: CallbackQuery, db_user: User):
+    """Inventar - daraja ichidagi mavzular"""
+    from src.database import get_session
+    from src.database.models import Level, FlashcardDeck
+    from src.database.models.language import Day
+    from sqlalchemy import select, and_
+
+    level_id = int(callback.data.split(":")[-1])
+
+    async with get_session() as session:
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        repo = TopicPurchaseRepository(session)
+
+        # Get level
+        level_result = await session.execute(
+            select(Level).where(Level.id == level_id)
+        )
+        level = level_result.scalar_one_or_none()
+
+        if not level:
+            await callback.answer("❌ Daraja topilmadi!", show_alert=True)
+            return
+
+        level_icons = {
+            "A1": "🟢", "A2": "🟡", "B1": "🔵",
+            "B2": "🟣", "C1": "🟠", "C2": "🔴"
+        }
+        icon = level_icons.get(level.name.upper().split()[0], "📚")
+
+        text = f"""
+╔═══════════════════════════════════╗
+║  {icon} {level.name.upper()} - Inventar
+╚═══════════════════════════════════╝
+
+<i>Mavzuni tanlang va o'rganishni boshlang!</i>
+
+"""
+
+        builder = InlineKeyboardBuilder()
+
+        # Get purchased days for this level
+        purchased_ids = set(await repo.get_purchased_day_ids(db_user.user_id))
+
+        # Get all accessible days in this level (purchased + free)
+        days_result = await session.execute(
+            select(Day).where(
+                Day.level_id == level_id,
+                Day.is_active == True
+            ).order_by(Day.day_number)
+        )
+        days = days_result.scalars().all()
+
+        for day in days:
+            is_purchased = day.id in purchased_ids
+            is_free = not day.is_premium and day.price == 0
+
+            if is_purchased or is_free:
+                builder.row(InlineKeyboardButton(
+                    text=f"📚 {day.display_name}",
+                    callback_data=f"shop:inv_topic:{day.id}"
+                ))
+
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="shop:inventory"))
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("shop:inv_topic:"))
+async def inventory_topic_actions(callback: CallbackQuery, db_user: User):
+    """Inventar - mavzu uchun Quiz/Flashcard tugmalari"""
+    from src.database import get_session
+    from src.database.models import FlashcardDeck, Question
+    from src.database.models.language import Day, Level
+    from sqlalchemy import select, func
+
+    day_id = int(callback.data.split(":")[-1])
+
+    async with get_session() as session:
+        # Get day
+        day_result = await session.execute(
+            select(Day).where(Day.id == day_id)
+        )
+        day = day_result.scalar_one_or_none()
+
+        if not day:
+            await callback.answer("❌ Mavzu topilmadi!", show_alert=True)
+            return
+
+        # Get level
+        level = None
+        if day.level_id:
+            level_result = await session.execute(
+                select(Level).where(Level.id == day.level_id)
+            )
+            level = level_result.scalar_one_or_none()
+
+        # Question count
+        q_count = await session.execute(
+            select(func.count(Question.id)).where(
+                Question.day_id == day_id,
+                Question.is_active == True
+            )
+        )
+        question_count = q_count.scalar() or 0
+
+        # Find linked deck
+        deck_result = await session.execute(
+            select(FlashcardDeck).where(
+                FlashcardDeck.day_id == day_id,
+                FlashcardDeck.is_active == True
+            )
+        )
+        deck = deck_result.scalar_one_or_none()
+
+        card_count = 0
+        if deck:
+            from src.database.models import Flashcard
+            cc = await session.execute(
+                select(func.count(Flashcard.id)).where(
+                    Flashcard.deck_id == deck.id,
+                    Flashcard.is_active == True
+                )
+            )
+            card_count = cc.scalar() or 0
+
+    level_name = level.name if level else "Umumiy"
+    level_icons = {"A1": "🟢", "A2": "🟡", "B1": "🔵", "B2": "🟣", "C1": "🟠", "C2": "🔴"}
+    level_icon = level_icons.get(level_name.upper().split()[0], "📚") if level else "📚"
+
+    text = f"""
+{level_icon} <b>{day.display_name}</b>
+📈 Daraja: {level_name}
+
+📝 Savollar: <b>{question_count}</b> ta
+🃏 Kartalar: <b>{card_count}</b> ta
+
+<i>Nima qilmoqchisiz?</i>
+"""
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(
+        text="📝 Quiz boshlash",
+        callback_data=f"quiz:day:{day_id}"
+    ))
+    if deck:
+        builder.row(InlineKeyboardButton(
+            text="🃏 Flashcard boshlash",
+            callback_data=f"flashcard:start:{deck.id}"
+        ))
+
+    if day.level_id:
+        builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data=f"shop:inv_level:{day.level_id}"))
+    else:
+        builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="shop:inventory"))
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()

@@ -51,7 +51,9 @@ __all__ = [
     "SRTuningManager",
     "FlashcardExportImport",
     "DeckPurchaseRepository",
+    "TopicPurchaseRepository",
 ]
 from .inventory_repo import InventoryRepository
 from src.repositories.deck_purchase_repo import DeckPurchaseRepository
 from src.repositories.spaced_rep_repo import SpacedRepetitionRepository
+from src.repositories.topic_purchase_repo import TopicPurchaseRepository

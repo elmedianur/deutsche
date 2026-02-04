@@ -12,9 +12,6 @@ from .language import Language, Level, Day
 # Questions
 from .question import Question, QuestionVote
 
-# Vocabulary (unified word storage)
-from .vocabulary import Vocabulary
-
 # Progress and Streaks
 from .progress import UserProgress, UserStreak, SpacedRepetition
 
@@ -84,9 +81,6 @@ __all__ = [
     # Questions
     "Question",
     "QuestionVote",
-
-    # Vocabulary
-    "Vocabulary",
     
     # Progress
     "UserProgress",
@@ -136,4 +130,4 @@ __all__ = [
     "BroadcastMessage",
 ]
 
-from .subscription import UserInventory
+from .subscription import UserInventory, UserTopicPurchase
