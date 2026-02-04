@@ -287,11 +287,12 @@ async def show_decks(callback: CallbackQuery, state: FSMContext, db_user: User):
         accessible_ids = free_day_ids | purchased_day_ids
 
         for level in levels:
-            # Count decks in this level
+            # Count system decks in this level (exclude user personal decks)
             deck_count_result = await session.execute(
                 select(func.count(FlashcardDeck.id)).where(
                     FlashcardDeck.level_id == level.id,
-                    FlashcardDeck.is_active == True
+                    FlashcardDeck.is_active == True,
+                    FlashcardDeck.owner_id == None
                 )
             )
             deck_count = deck_count_result.scalar() or 0
@@ -304,6 +305,7 @@ async def show_decks(callback: CallbackQuery, state: FSMContext, db_user: User):
                 select(func.count(FlashcardDeck.id)).where(
                     FlashcardDeck.level_id == level.id,
                     FlashcardDeck.is_active == True,
+                    FlashcardDeck.owner_id == None,
                     FlashcardDeck.day_id.in_(accessible_ids) if accessible_ids else FlashcardDeck.id == -1
                 )
             )
@@ -361,11 +363,12 @@ async def show_level_decks(callback: CallbackQuery, state: FSMContext, db_user: 
 
         icon = level_icons.get(level.name.upper().split()[0], "📚")
 
-        # Get decks in this level with day info
+        # Get system decks in this level (exclude user personal decks)
         decks_result = await session.execute(
             select(FlashcardDeck).where(
                 FlashcardDeck.level_id == level_id,
-                FlashcardDeck.is_active == True
+                FlashcardDeck.is_active == True,
+                FlashcardDeck.owner_id == None
             ).order_by(FlashcardDeck.display_order)
         )
         decks = decks_result.scalars().all()

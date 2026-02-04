@@ -42,16 +42,20 @@ class ShopAdminStates(StatesGroup):
 @router.callback_query(F.data == "admin:shop")
 async def admin_shop_menu(callback: CallbackQuery):
     """Admin shop boshqaruv menusi"""
+    from sqlalchemy import func as sql_func
     async with get_session() as session:
-        result = await session.execute(
-            select(FlashcardDeck).where(FlashcardDeck.is_active == True).order_by(FlashcardDeck.id)
+        count_result = await session.execute(
+            select(sql_func.count(FlashcardDeck.id)).where(
+                FlashcardDeck.is_active == True,
+                FlashcardDeck.owner_id == None
+            )
         )
-        decks = list(result.scalars().all())
+        deck_count = count_result.scalar() or 0
     
     text = f"""
 🛒 <b>Do'kon Boshqaruvi</b>
 
-📦 Jami decklar: {len(decks)}
+📦 Jami decklar: {deck_count}
 """
     
     builder = InlineKeyboardBuilder()
@@ -104,28 +108,19 @@ async def admin_decks_list(callback: CallbackQuery):
         for level in levels:
             deck_count_result = await session.execute(
                 select(func.count(FlashcardDeck.id)).where(
-                    FlashcardDeck.level_id == level.id
+                    FlashcardDeck.level_id == level.id,
+                    FlashcardDeck.owner_id == None  # Faqat system decklar
                 )
             )
             deck_count = deck_count_result.scalar() or 0
+
+            if deck_count == 0:
+                continue
 
             icon = level_icons.get(level.name.upper().split()[0], "📚")
             builder.row(InlineKeyboardButton(
                 text=f"{icon} {level.name} — {deck_count} ta deck",
                 callback_data=f"admin:shop:decks_level:{level.id}"
-            ))
-
-        # Decks without level
-        no_level_result = await session.execute(
-            select(func.count(FlashcardDeck.id)).where(
-                FlashcardDeck.level_id == None
-            )
-        )
-        no_level_count = no_level_result.scalar() or 0
-        if no_level_count > 0:
-            builder.row(InlineKeyboardButton(
-                text=f"📂 Darajasiz — {no_level_count} ta deck",
-                callback_data="admin:shop:decks_level:0"
             ))
 
     builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:shop"))
@@ -146,10 +141,11 @@ async def admin_decks_by_level(callback: CallbackQuery):
 
     async with get_session() as session:
         if level_id == 0:
-            # Decks without level
+            # System decks without level
             result = await session.execute(
                 select(FlashcardDeck).where(
-                    FlashcardDeck.level_id == None
+                    FlashcardDeck.level_id == None,
+                    FlashcardDeck.owner_id == None
                 ).order_by(FlashcardDeck.display_order, FlashcardDeck.id)
             )
             level_name = "Darajasiz"
@@ -168,7 +164,8 @@ async def admin_decks_by_level(callback: CallbackQuery):
 
             result = await session.execute(
                 select(FlashcardDeck).where(
-                    FlashcardDeck.level_id == level_id
+                    FlashcardDeck.level_id == level_id,
+                    FlashcardDeck.owner_id == None  # Faqat system decklar
                 ).order_by(FlashcardDeck.display_order, FlashcardDeck.id)
             )
 
