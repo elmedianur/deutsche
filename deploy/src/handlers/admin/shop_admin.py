@@ -174,6 +174,17 @@ async def admin_decks_by_level(callback: CallbackQuery):
 
         decks = list(result.scalars().all())
 
+        # Get day names for decks
+        day_names = {}
+        for deck in decks:
+            if deck.day_id:
+                day_result = await session.execute(
+                    select(Day).where(Day.id == deck.day_id)
+                )
+                day = day_result.scalar_one_or_none()
+                if day:
+                    day_names[deck.id] = day.display_name
+
     text = f"{icon} <b>{level_name} — Decklar</b>\n\n"
 
     builder = InlineKeyboardBuilder()
@@ -184,8 +195,9 @@ async def admin_decks_by_level(callback: CallbackQuery):
         for deck in decks:
             status = "✅" if deck.is_active else "❌"
             premium = "⭐" if deck.is_premium else ""
+            display = day_names.get(deck.id, deck.name)
             builder.row(InlineKeyboardButton(
-                text=f"{status} {deck.icon} {deck.name} ({deck.cards_count}) {premium}",
+                text=f"{status} {display} ({deck.cards_count}) {premium}",
                 callback_data=f"admin:shop:deck:{deck.id}"
             ))
 
