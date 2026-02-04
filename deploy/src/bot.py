@@ -74,7 +74,10 @@ async def create_dispatcher() -> Dispatcher:
     
     dp.message.middleware(SubscriptionMiddleware())
     dp.callback_query.middleware(SubscriptionMiddleware())
-    
+
+    # Pre-checkout query uchun logging middleware
+    dp.pre_checkout_query.middleware(LoggingMiddleware())
+
     return dp
 
 

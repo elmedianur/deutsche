@@ -187,17 +187,18 @@ async def flashcard_start_deck(callback: CallbackQuery, state: FSMContext, db_us
     async with get_session() as session:
         deck_repo = FlashcardDeckRepository(session)
         card_repo = FlashcardRepository(session)
-        purchase_repo = DeckPurchaseRepository(session)
 
         deck = await deck_repo.get_by_id(deck_id)
         if not deck:
             await callback.answer("❌ Deck topilmadi!", show_alert=True)
             return
 
-        # Check access
-        has_access = await purchase_repo.has_deck_access(user_id, deck_id)
+        # Check access via TopicPurchaseRepository (day-based)
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        topic_repo = TopicPurchaseRepository(session)
+        has_access = await topic_repo.has_topic_access(user_id, deck.day_id) if deck.day_id else True
         if not has_access:
-            await callback.answer("🔒 Bu deckni avval sotib oling!", show_alert=True)
+            await callback.answer("🔒 Bu mavzuni avval do'kondan sotib oling!", show_alert=True)
             return
 
         # Get cards
@@ -1529,17 +1530,19 @@ async def show_export_menu(callback: CallbackQuery, db_user: User):
     try:
         async with get_session() as session:
             deck_repo = FlashcardDeckRepository(session)
-            purchase_repo = DeckPurchaseRepository(session)
+            from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+            topic_repo = TopicPurchaseRepository(session)
             decks = await deck_repo.get_all()
-            
+            purchased_day_ids = set(await topic_repo.get_purchased_day_ids(user_id))
+
             # Prepare deck list with ownership info
             deck_list = []
             for deck in decks[:10]:
-                if deck.is_premium:
-                    purchased = await purchase_repo.has_purchased(user_id, deck.id)
+                if deck.is_premium and deck.day_id:
+                    has_access = deck.day_id in purchased_day_ids
                     deck_list.append({
                         "deck": deck,
-                        "locked": not purchased
+                        "locked": not has_access
                     })
                 else:
                     deck_list.append({

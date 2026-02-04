@@ -1643,6 +1643,7 @@ async def topic_buy_with_telegram_stars(callback: CallbackQuery, db_user: User, 
         return
 
     try:
+        logger.info(f"Sending topic invoice: user={db_user.user_id}, day={day_id}, price={price}, currency=XTR")
         await bot.send_invoice(
             chat_id=callback.message.chat.id,
             title=f"📚 {day.display_name}",
@@ -1651,6 +1652,7 @@ async def topic_buy_with_telegram_stars(callback: CallbackQuery, db_user: User, 
             currency="XTR",
             prices=[LabeledPrice(label=day.display_name, amount=price)]
         )
+        logger.info(f"Topic invoice sent successfully: user={db_user.user_id}, day={day_id}")
         await callback.answer()
     except Exception as e:
         logger.error(f"Topic invoice error: {e}")
@@ -1660,6 +1662,7 @@ async def topic_buy_with_telegram_stars(callback: CallbackQuery, db_user: User, 
 @router.pre_checkout_query(F.invoice_payload.startswith("topic:"))
 async def topic_pre_checkout(pre_checkout: PreCheckoutQuery):
     """Topic to'lov tasdiqlash"""
+    logger.info(f"Topic pre_checkout: user={pre_checkout.from_user.id}, payload={pre_checkout.invoice_payload}, amount={pre_checkout.total_amount}")
     await pre_checkout.answer(ok=True)
 
 
@@ -1675,6 +1678,8 @@ async def topic_successful_payment(message: Message, db_user: User):
     day_id = int(payload.split(":")[-1])
     price = message.successful_payment.total_amount
     charge_id = message.successful_payment.telegram_payment_charge_id
+
+    logger.info(f"Topic successful_payment: user={db_user.user_id}, payload={payload}, day={day_id}, price={price}, charge={charge_id}")
 
     try:
         async with get_session() as session:

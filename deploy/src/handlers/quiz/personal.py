@@ -339,7 +339,7 @@ async def select_day_direct(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "📚 <b>Quiz boshlash</b>\n\n"
         "🔢 Savollar sonini tanlang:",
-        reply_markup=await question_count_keyboard()
+        reply_markup=question_count_keyboard()
     )
     await callback.answer()
 
