@@ -81,34 +81,116 @@ async def admin_shop_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin:shop:decks")
 async def admin_decks_list(callback: CallbackQuery):
-    """Decklar ro'yxati"""
+    """Decklar ro'yxati - Darajalar bo'yicha"""
+    from sqlalchemy import func
+
     async with get_session() as session:
+        # Get levels with deck counts
         result = await session.execute(
-            select(FlashcardDeck).order_by(FlashcardDeck.id)
+            select(Level).where(Level.is_active == True).order_by(Level.display_order)
         )
-        decks = list(result.scalars().all())
-    
-    if not decks:
-        await callback.answer("Decklar yo'q!", show_alert=True)
-        return
-    
-    text = "📦 <b>Decklar Ro'yxati</b>\n\n"
-    
+        levels = result.scalars().all()
+
+    level_icons = {
+        "A1": "🟢", "A2": "🟡", "B1": "🔵",
+        "B2": "🟣", "C1": "🟠", "C2": "🔴"
+    }
+
+    text = "📦 <b>Decklar Ro'yxati</b>\n\n<i>Darajani tanlang:</i>\n"
+
     builder = InlineKeyboardBuilder()
-    for deck in decks:
-        status = "✅" if deck.is_active else "❌"
-        premium = "⭐" if deck.is_premium else ""
-        builder.row(
-            InlineKeyboardButton(
-                text=f"{status} {deck.icon} {deck.name} {premium}",
-                callback_data=f"admin:shop:deck:{deck.id}"
+
+    async with get_session() as session:
+        for level in levels:
+            deck_count_result = await session.execute(
+                select(func.count(FlashcardDeck.id)).where(
+                    FlashcardDeck.level_id == level.id
+                )
+            )
+            deck_count = deck_count_result.scalar() or 0
+
+            icon = level_icons.get(level.name.upper().split()[0], "📚")
+            builder.row(InlineKeyboardButton(
+                text=f"{icon} {level.name} — {deck_count} ta deck",
+                callback_data=f"admin:shop:decks_level:{level.id}"
+            ))
+
+        # Decks without level
+        no_level_result = await session.execute(
+            select(func.count(FlashcardDeck.id)).where(
+                FlashcardDeck.level_id == None
             )
         )
-    
-    builder.row(
-        InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:shop")
-    )
-    
+        no_level_count = no_level_result.scalar() or 0
+        if no_level_count > 0:
+            builder.row(InlineKeyboardButton(
+                text=f"📂 Darajasiz — {no_level_count} ta deck",
+                callback_data="admin:shop:decks_level:0"
+            ))
+
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:shop"))
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:shop:decks_level:"))
+async def admin_decks_by_level(callback: CallbackQuery):
+    """Daraja ichidagi decklar"""
+    level_id = int(callback.data.split(":")[-1])
+
+    level_icons = {
+        "A1": "🟢", "A2": "🟡", "B1": "🔵",
+        "B2": "🟣", "C1": "🟠", "C2": "🔴"
+    }
+
+    async with get_session() as session:
+        if level_id == 0:
+            # Decks without level
+            result = await session.execute(
+                select(FlashcardDeck).where(
+                    FlashcardDeck.level_id == None
+                ).order_by(FlashcardDeck.display_order, FlashcardDeck.id)
+            )
+            level_name = "Darajasiz"
+            icon = "📂"
+        else:
+            level_result = await session.execute(
+                select(Level).where(Level.id == level_id)
+            )
+            level = level_result.scalar_one_or_none()
+            if not level:
+                await callback.answer("❌ Daraja topilmadi!", show_alert=True)
+                return
+
+            level_name = level.name
+            icon = level_icons.get(level.name.upper().split()[0], "📚")
+
+            result = await session.execute(
+                select(FlashcardDeck).where(
+                    FlashcardDeck.level_id == level_id
+                ).order_by(FlashcardDeck.display_order, FlashcardDeck.id)
+            )
+
+        decks = list(result.scalars().all())
+
+    text = f"{icon} <b>{level_name} — Decklar</b>\n\n"
+
+    builder = InlineKeyboardBuilder()
+
+    if not decks:
+        text += "<i>Bu darajada decklar yo'q.</i>\n"
+    else:
+        for deck in decks:
+            status = "✅" if deck.is_active else "❌"
+            premium = "⭐" if deck.is_premium else ""
+            builder.row(InlineKeyboardButton(
+                text=f"{status} {deck.icon} {deck.name} ({deck.cards_count}) {premium}",
+                callback_data=f"admin:shop:deck:{deck.id}"
+            ))
+
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:shop:decks"))
+
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
 

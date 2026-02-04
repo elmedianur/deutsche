@@ -767,44 +767,124 @@ async def questions_menu(callback: CallbackQuery):
 # ============== LIST QUESTIONS (NEW!) ==============
 @router.callback_query(F.data == "admin:list_questions")
 async def list_questions(callback: CallbackQuery):
-    """List questions - show topics (Days) directly"""
+    """List questions - Darajalar ro'yxati"""
     if not await is_admin_async(callback.from_user.id):
         return
 
+    from sqlalchemy import func
+
+    level_icons = {
+        "A1": "🟢", "A2": "🟡", "B1": "🔵",
+        "B2": "🟣", "C1": "🟠", "C2": "🔴"
+    }
+
     async with get_session() as session:
-        # Get all Days with question counts
-        from src.database.models import Day, Level
+        from src.database.models import Day, Level, Question
+
         result = await session.execute(
-            select(Day, Level)
-            .join(Level, Day.level_id == Level.id)
-            .where(Day.is_active == True)
-            .order_by(Level.display_order, Day.day_number)
+            select(Level).where(Level.is_active == True).order_by(Level.display_order)
         )
-        days_with_levels = result.all()
+        levels = result.scalars().all()
 
-    if not days_with_levels:
-        await callback.answer("❌ Mavzular yo'q!", show_alert=True)
-        return
-
-    # Group by level
-    by_level = {}
-    for day, level in days_with_levels:
-        if level.name not in by_level:
-            by_level[level.name] = []
-        by_level[level.name].append(day)
-
-    text = "📋 <b>Savollar ro'yxati</b>\n\nMavzuni tanlang:\n"
+    text = "📋 <b>Savollar ro'yxati</b>\n\n<i>Darajani tanlang:</i>\n"
 
     builder = InlineKeyboardBuilder()
-    for level_name, days in by_level.items():
-        # Add level header as a row
-        for day in days[:10]:  # First 10 days per level
+
+    async with get_session() as session:
+        from src.database.models import Day, Question
+        for level in levels:
+            # Count days and questions in this level
+            day_count_result = await session.execute(
+                select(func.count(Day.id)).where(
+                    Day.level_id == level.id,
+                    Day.is_active == True
+                )
+            )
+            day_count = day_count_result.scalar() or 0
+
+            q_count_result = await session.execute(
+                select(func.count(Question.id))
+                .join(Day, Question.day_id == Day.id)
+                .where(Day.level_id == level.id)
+            )
+            q_count = q_count_result.scalar() or 0
+
+            if day_count == 0:
+                continue
+
+            icon = level_icons.get(level.name.upper().split()[0], "📚")
             builder.row(InlineKeyboardButton(
-                text=f"{level_name} | {day.name[:25]}",
-                callback_data=f"admin:list_q_day:{day.id}"
+                text=f"{icon} {level.name} — {day_count} mavzu, {q_count} savol",
+                callback_data=f"admin:list_q_level:{level.id}"
             ))
 
     builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:questions"))
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:list_q_level:"))
+async def list_questions_by_level(callback: CallbackQuery):
+    """Daraja ichidagi mavzular (Day) ro'yxati"""
+    if not await is_admin_async(callback.from_user.id):
+        return
+
+    level_id = int(callback.data.split(":")[-1])
+
+    level_icons = {
+        "A1": "🟢", "A2": "🟡", "B1": "🔵",
+        "B2": "🟣", "C1": "🟠", "C2": "🔴"
+    }
+
+    async with get_session() as session:
+        from src.database.models import Day, Level, Question
+        from sqlalchemy import func
+
+        level_result = await session.execute(
+            select(Level).where(Level.id == level_id)
+        )
+        level = level_result.scalar_one_or_none()
+
+        if not level:
+            await callback.answer("❌ Daraja topilmadi!", show_alert=True)
+            return
+
+        icon = level_icons.get(level.name.upper().split()[0], "📚")
+
+        # Get days with question counts
+        days_result = await session.execute(
+            select(Day).where(
+                Day.level_id == level_id,
+                Day.is_active == True
+            ).order_by(Day.day_number)
+        )
+        days = days_result.scalars().all()
+
+    text = f"{icon} <b>{level.name} — Mavzular</b>\n\n<i>Mavzuni tanlang:</i>\n"
+
+    builder = InlineKeyboardBuilder()
+
+    async with get_session() as session:
+        from src.database.models import Question
+        from sqlalchemy import func
+
+        for day in days:
+            q_count_result = await session.execute(
+                select(func.count(Question.id)).where(Question.day_id == day.id)
+            )
+            q_count = q_count_result.scalar() or 0
+
+            name = day.name[:25] if day.name else f"Kun {day.day_number}"
+            builder.row(InlineKeyboardButton(
+                text=f"📝 {name} — {q_count} savol",
+                callback_data=f"admin:list_q_day:{day.id}"
+            ))
+
+    if not days:
+        text += "<i>Bu darajada mavzular yo'q.</i>\n"
+
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:list_questions"))
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
@@ -872,7 +952,9 @@ async def list_questions_by_day(callback: CallbackQuery):
     if nav_buttons:
         builder.row(*nav_buttons)
 
-    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:list_questions"))
+    # Back to level (if day has level_id)
+    back_cb = f"admin:list_q_level:{day.level_id}" if day.level_id else "admin:list_questions"
+    builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data=back_cb))
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
