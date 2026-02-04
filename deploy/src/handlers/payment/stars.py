@@ -135,15 +135,26 @@ async def confirm_purchase(callback: CallbackQuery, db_user: User, bot: Bot):
 # PAYMENT PROCESSING
 # ============================================================
 
-@router.pre_checkout_query()
+@router.pre_checkout_query(
+    ~F.invoice_payload.startswith("topic:") &
+    ~F.invoice_payload.startswith("shop:") &
+    ~F.invoice_payload.startswith("bundle:") &
+    ~F.invoice_payload.startswith("daily:")
+)
 async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
-    """Handle pre-checkout query"""
+    """Handle pre-checkout query (faqat premium obuna, topic/shop emas)"""
     await payment_service.process_pre_checkout(pre_checkout)
 
 
-@router.message(F.successful_payment)
+@router.message(
+    F.successful_payment &
+    ~F.successful_payment.invoice_payload.startswith("topic:") &
+    ~F.successful_payment.invoice_payload.startswith("shop:") &
+    ~F.successful_payment.invoice_payload.startswith("bundle:") &
+    ~F.successful_payment.invoice_payload.startswith("daily:")
+)
 async def process_successful_payment(message: Message, db_user: User):
-    """Handle successful payment"""
+    """Handle successful payment (faqat premium obuna, topic/shop emas)"""
     payment = message.successful_payment
     
     try:
