@@ -174,8 +174,8 @@ So'zlarni kartochkalar yordamida o'rganing!
 @router.callback_query(F.data == "flashcard:start")
 async def flashcard_start(callback: CallbackQuery, state: FSMContext, db_user: User):
     """Redirect to decks - start learning"""
-    callback.data = "fc:decks"
-    await show_decks(callback, state, db_user)
+    updated_cb = callback.model_copy(update={"data": "fc:decks"})
+    await show_decks(updated_cb, state, db_user)
 
 
 @router.callback_query(F.data.startswith("flashcard:start:"))
@@ -240,8 +240,8 @@ async def flashcard_start_deck(callback: CallbackQuery, state: FSMContext, db_us
 @router.callback_query(F.data == "flashcard:decks")
 async def flashcard_decks(callback: CallbackQuery, state: FSMContext, db_user: User):
     """Redirect to decks"""
-    callback.data = "fc:decks"
-    await show_decks(callback, state, db_user)
+    updated_cb = callback.model_copy(update={"data": "fc:decks"})
+    await show_decks(updated_cb, state, db_user)
 
 
 @router.callback_query(F.data == "flashcard:progress")

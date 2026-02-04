@@ -1532,8 +1532,8 @@ async def topic_get_free(callback: CallbackQuery, db_user: User):
     await callback.answer("✅ Mavzu inventaringizga qo'shildi!", show_alert=True)
 
     # Refresh topic info page
-    callback.data = f"shop:topic_info:{day_id}"
-    await topic_info(callback, db_user)
+    updated_cb = callback.model_copy(update={"data": f"shop:topic_info:{day_id}"})
+    await topic_info(updated_cb, db_user)
 
 
 @router.callback_query(F.data.startswith("shop:topic_buy_stars:"))
@@ -1607,8 +1607,8 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
     logger.info(f"Topic purchase (stars): user={db_user.user_id}, day={day_id}, price={price}")
 
     # Refresh topic info page
-    callback.data = f"shop:topic_info:{day_id}"
-    await topic_info(callback, db_user)
+    updated_cb = callback.model_copy(update={"data": f"shop:topic_info:{day_id}"})
+    await topic_info(updated_cb, db_user)
 
 
 @router.callback_query(F.data.startswith("shop:topic_buy_telegram:"))

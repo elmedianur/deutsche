@@ -791,8 +791,8 @@ async def quiz_skip_current(callback: CallbackQuery, state: FSMContext, db_user:
     current = quiz_data.get("current", 0)
 
     # Redirect to existing skip handler
-    callback.data = f"skip:{current}"
-    await handle_skip(callback, state, db_user)
+    updated_cb = callback.model_copy(update={"data": f"skip:{current}"})
+    await handle_skip(updated_cb, state, db_user)
 
 
 @router.callback_query(F.data.startswith("vote:up:"))

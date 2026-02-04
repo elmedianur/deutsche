@@ -1066,8 +1066,8 @@ async def toggle_question(callback: CallbackQuery):
             await callback.answer(f"✅ Savol {status}!", show_alert=True)
 
     # Refresh view
-    callback.data = f"admin:view_q:{question_id}:{day_id}:{page}"
-    await view_question(callback)
+    updated_cb = callback.model_copy(update={"data": f"admin:view_q:{question_id}:{day_id}:{page}"})
+    await view_question(updated_cb)
 
 
 @router.callback_query(F.data.startswith("admin:del_q:"))
@@ -1116,8 +1116,8 @@ async def delete_question_execute(callback: CallbackQuery):
     await callback.answer("🗑 Savol o'chirildi!", show_alert=True)
 
     # Go back to list
-    callback.data = f"admin:list_q_day:{day_id}:{page}"
-    await list_questions_by_day(callback)
+    updated_cb = callback.model_copy(update={"data": f"admin:list_q_day:{day_id}:{page}"})
+    await list_questions_by_day(updated_cb)
 
 
 @router.callback_query(F.data.startswith("admin:edit_q:"))
@@ -2899,8 +2899,8 @@ async def admin_deck_toggle_premium(callback: CallbackQuery):
             await callback.answer(f"✅ Deck endi {status}", show_alert=True)
     
     # Refresh edit menu
-    callback.data = f"admin:deck_edit:{deck_id}"
-    await admin_deck_edit(callback)
+    updated_cb = callback.model_copy(update={"data": f"admin:deck_edit:{deck_id}"})
+    await admin_deck_edit(updated_cb)
 
 
 @router.callback_query(F.data.startswith("admin:deck_edit_name:"))
@@ -3126,8 +3126,8 @@ async def admin_button_reset(callback: CallbackQuery, state: FSMContext):
     await callback.answer(f"✅ Tiklandi: {default}", show_alert=True)
 
     # Tugmalar menyusiga qaytish
-    callback.data = "admin:buttons"
-    await admin_buttons_menu(callback)
+    updated_cb = callback.model_copy(update={"data": "admin:buttons"})
+    await admin_buttons_menu(updated_cb)
 
 
 @router.callback_query(F.data == "admin:btn_reset_all")
@@ -3176,5 +3176,5 @@ async def admin_buttons_reset_all_confirm(callback: CallbackQuery):
     await callback.answer(f"✅ {count} ta tugma tiklandi!", show_alert=True)
 
     # Tugmalar menyusiga qaytish
-    callback.data = "admin:buttons"
-    await admin_buttons_menu(callback)
+    updated_cb = callback.model_copy(update={"data": "admin:buttons"})
+    await admin_buttons_menu(updated_cb)
