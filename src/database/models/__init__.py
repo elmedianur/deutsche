@@ -130,4 +130,4 @@ __all__ = [
     "BroadcastMessage",
 ]
 
-from .subscription import UserInventory
+from .subscription import UserInventory, UserTopicPurchase

@@ -5,7 +5,7 @@ Telegram Stars integration
 from datetime import datetime, timedelta
 from typing import Optional, TYPE_CHECKING
 from enum import Enum
-from sqlalchemy import String, Text, ForeignKey, Integer, BigInteger, DateTime, Boolean, Enum as SQLEnum
+from sqlalchemy import String, Text, ForeignKey, Integer, BigInteger, DateTime, Boolean, Enum as SQLEnum, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base, TimestampMixin
@@ -313,12 +313,42 @@ class UserInventory(Base, TimestampMixin):
     item_id: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g. "xp_boost_2x"
     item_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "item" or "bundle"
     quantity: Mapped[int] = mapped_column(default=1)
-    
+
     # Usage tracking
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    
+
     # Purchase info
     stars_paid: Mapped[int] = mapped_column(default=0)
     telegram_payment_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+
+# ============================================================
+# USER TOPIC PURCHASE MODEL
+# ============================================================
+
+class UserTopicPurchase(Base, TimestampMixin):
+    """User topic (Day) purchase - mavzu sotib olish"""
+
+    __tablename__ = "user_topic_purchases"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    day_id: Mapped[int] = mapped_column(
+        ForeignKey("days.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    # To'lov ma'lumotlari
+    price_paid: Mapped[int] = mapped_column(Integer, default=0)
+    payment_method: Mapped[str] = mapped_column(String(20), default="stars")  # stars, telegram_stars, free
+    telegram_payment_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+    # Holat
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'day_id', name='uq_user_topic_purchase'),
+    )
