@@ -1109,32 +1109,30 @@ async def show_inventory(callback: CallbackQuery, db_user: User):
         )
         free_days = free_days_result.scalars().all()
 
-        # Merge free days into grouped
+        # Merge free days into grouped (by ID to avoid duplicates)
         for day in free_days:
             if day.level_id not in purchased_days:
                 purchased_days[day.level_id] = []
-            if day not in purchased_days[day.level_id]:
+            existing_ids = {d.id for d in purchased_days[day.level_id]}
+            if day.id not in existing_ids:
                 purchased_days[day.level_id].append(day)
 
         if purchased_days:
-            # Get level info
+            # Get level info ordered by display_order
             level_ids = list(purchased_days.keys())
             levels_result = await session.execute(
                 select(Level).where(Level.id.in_(level_ids)).order_by(Level.display_order)
             )
-            levels = {l.id: l for l in levels_result.scalars().all()}
+            levels_ordered = levels_result.scalars().all()
 
-            for level_id in level_ids:
-                level = levels.get(level_id)
-                if not level:
-                    continue
+            for level in levels_ordered:
                 icon = level_icons.get(level.name.upper().split()[0], "📚")
-                day_count = len(purchased_days[level_id])
+                day_count = len(purchased_days[level.id])
                 has_purchases = True
 
                 builder.row(InlineKeyboardButton(
                     text=f"{icon} {level.name} — {day_count} ta mavzu",
-                    callback_data=f"shop:inv_level:{level_id}"
+                    callback_data=f"shop:inv_level:{level.id}"
                 ))
 
     if not has_purchases:
@@ -1158,8 +1156,7 @@ async def shop_decks_levels(callback: CallbackQuery, db_user: User):
     from src.database import get_session
     from src.database.models import Level
     from src.database.models.language import Day
-    from src.database.models.subscription import UserTopicPurchase
-    from sqlalchemy import select, func, and_
+    from sqlalchemy import select, func
 
     text = """
 ╔═══════════════════════════════════╗
@@ -1188,8 +1185,6 @@ async def shop_decks_levels(callback: CallbackQuery, db_user: User):
         )
         levels = result.scalars().all()
 
-        # Get purchased topic count per level
-        purchased_per_level = await repo.get_user_purchases_count_per_level(db_user.user_id)
         # Get free day IDs
         free_day_ids = set(await repo.get_free_day_ids())
         purchased_day_ids = set(await repo.get_purchased_day_ids(db_user.user_id))
@@ -1542,6 +1537,7 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
     """Virtual yulduz (in-app stars) bilan mavzu sotib olish"""
     from src.database import get_session
     from src.database.models.language import Day
+    from src.database.models import User as UserModel
     from sqlalchemy import select
 
     day_id = int(callback.data.split(":")[-1])
@@ -1565,9 +1561,19 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
             await callback.answer("Siz allaqachon bu mavzuga kirishingiz mumkin!", show_alert=True)
             return
 
+        # Fetch fresh user from DB for accurate balance
+        fresh_user_result = await session.execute(
+            select(UserModel).where(UserModel.user_id == db_user.user_id)
+        )
+        fresh_user = fresh_user_result.scalar_one_or_none()
+
+        if not fresh_user:
+            await callback.answer("❌ Foydalanuvchi topilmadi!", show_alert=True)
+            return
+
         # Check balance
         price = day.price
-        current_stars = db_user.stars or 0
+        current_stars = fresh_user.stars or 0
         if current_stars < price:
             await callback.answer(
                 f"❌ Yetarli stars yo'q!\n\nKerak: {price}⭐\nBalans: {current_stars}⭐\n\nTelegram Stars bilan sotib olishga urinib ko'ring!",
@@ -1575,8 +1581,8 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
             )
             return
 
-        # Deduct stars
-        success = db_user.remove_stars(price)
+        # Deduct stars from fresh DB object
+        success = fresh_user.remove_stars(price)
         if not success:
             await callback.answer("❌ Balans yetarli emas!", show_alert=True)
             return
@@ -1589,6 +1595,9 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
             payment_method="stars"
         )
         await session.commit()
+
+        # Update in-memory db_user so UI reflects change
+        db_user.stars = fresh_user.stars
 
     await callback.answer(f"✅ Mavzu sotib olindi! (-{price}⭐)", show_alert=True)
     logger.info(f"Topic purchase (stars): user={db_user.user_id}, day={day_id}, price={price}")
