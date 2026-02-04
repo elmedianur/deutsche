@@ -502,8 +502,9 @@ async def admin_toggle_deck(callback: CallbackQuery):
             await session.commit()
     
     await callback.answer(msg, show_alert=True)
-    
+
     # Refresh page
+    callback.data = f"admin:shop:deck:{deck_id}"
     await admin_deck_detail(callback)
 
 
