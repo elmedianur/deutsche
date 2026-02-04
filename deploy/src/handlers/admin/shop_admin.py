@@ -278,17 +278,31 @@ async def admin_deck_detail(callback: CallbackQuery):
             select(FlashcardDeck).where(FlashcardDeck.id == deck_id)
         )
         deck = result.scalar_one_or_none()
-    
-    if not deck:
-        await callback.answer("Deck topilmadi!", show_alert=True)
-        return
-    
+
+        if not deck:
+            await callback.answer("Deck topilmadi!", show_alert=True)
+            return
+
+        # Day ma'lumotlarini olish
+        day = None
+        if deck.day_id:
+            day_result = await session.execute(select(Day).where(Day.id == deck.day_id))
+            day = day_result.scalar_one_or_none()
+
     status = "✅ Faol" if deck.is_active else "❌ Nofaol"
-    premium = "⭐ Premium" if deck.is_premium else "🆓 Bepul"
-    
+
+    # Day premium holatini ko'rsatish (user market shunga qaraydi)
+    if day:
+        is_free = not day.is_premium and day.price == 0
+        premium = "🆓 Bepul" if is_free else f"⭐ Premium ({day.price} star)"
+        day_info = f"\n📋 Mavzu: {day.display_name}"
+    else:
+        premium = "⭐ Premium" if deck.is_premium else "🆓 Bepul"
+        day_info = ""
+
     text = f"""
 📦 <b>{deck.icon} {deck.name}</b>
-
+{day_info}
 📝 Tavsif: {deck.description or "—"}
 💰 Narxi: {deck.price} ⭐
 📚 Kartalar: {deck.cards_count} ta
@@ -335,8 +349,9 @@ async def admin_deck_detail(callback: CallbackQuery):
     builder.row(
         InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"admin:shop:delete:{deck_id}")
     )
+    back_cb = f"admin:shop:decks_level:{deck.level_id}" if deck.level_id else "admin:shop:decks"
     builder.row(
-        InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:shop:decks")
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data=back_cb)
     )
     
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
@@ -555,14 +570,27 @@ async def admin_toggle_deck(callback: CallbackQuery):
             elif toggle_type == "premium":
                 deck.is_premium = not deck.is_premium
                 msg = "⭐ Premium qilindi" if deck.is_premium else "🆓 Bepul qilindi"
-            
+
+                # Day ni ham yangilash (user market Day ga qaraydi)
+                if deck.day_id:
+                    day_result = await session.execute(
+                        select(Day).where(Day.id == deck.day_id)
+                    )
+                    day = day_result.scalar_one_or_none()
+                    if day:
+                        day.is_premium = deck.is_premium
+                        if deck.is_premium and day.price == 0:
+                            day.price = deck.price if deck.price > 0 else 50
+                        elif not deck.is_premium:
+                            day.price = 0
+
             await session.commit()
     
     await callback.answer(msg, show_alert=True)
 
-    # Refresh page
-    callback.data = f"admin:shop:deck:{deck_id}"
-    await admin_deck_detail(callback)
+    # Refresh page - callback frozen, shuning uchun model_copy ishlatamiz
+    updated_callback = callback.model_copy(update={"data": f"admin:shop:deck:{deck_id}"})
+    await admin_deck_detail(updated_callback)
 
 
 @router.callback_query(F.data.startswith("admin:shop:delete:"))
