@@ -44,18 +44,21 @@ async def admin_shop_menu(callback: CallbackQuery):
     """Admin shop boshqaruv menusi"""
     from sqlalchemy import func as sql_func
     async with get_session() as session:
-        count_result = await session.execute(
+        day_count = (await session.execute(
+            select(sql_func.count(Day.id)).where(Day.is_active == True)
+        )).scalar() or 0
+        deck_count = (await session.execute(
             select(sql_func.count(FlashcardDeck.id)).where(
                 FlashcardDeck.is_active == True,
                 FlashcardDeck.owner_id == None
             )
-        )
-        deck_count = count_result.scalar() or 0
-    
+        )).scalar() or 0
+
     text = f"""
 🛒 <b>Do'kon Boshqaruvi</b>
 
-📦 Jami decklar: {deck_count}
+📚 Jami mavzular: {day_count}
+🃏 Jami decklar: {deck_count}
 """
     
     builder = InlineKeyboardBuilder()
@@ -80,46 +83,59 @@ async def admin_shop_menu(callback: CallbackQuery):
 
 
 # ============================================================
-# DECKS LIST
+# DECKS LIST (Day-based - user marketi bilan bir xil)
 # ============================================================
 
 @router.callback_query(F.data == "admin:shop:decks")
 async def admin_decks_list(callback: CallbackQuery):
-    """Decklar ro'yxati - Darajalar bo'yicha"""
+    """Mavzular ro'yxati - Darajalar bo'yicha (user marketi bilan bir xil)"""
     from sqlalchemy import func
-
-    async with get_session() as session:
-        # Get levels with deck counts
-        result = await session.execute(
-            select(Level).where(Level.is_active == True).order_by(Level.display_order)
-        )
-        levels = result.scalars().all()
 
     level_icons = {
         "A1": "🟢", "A2": "🟡", "B1": "🔵",
         "B2": "🟣", "C1": "🟠", "C2": "🔴"
     }
 
-    text = "📦 <b>Decklar Ro'yxati</b>\n\n<i>Darajani tanlang:</i>\n"
+    text = "📦 <b>Mavzular Ro'yxati</b>\n\n<i>Darajani tanlang:</i>\n"
 
     builder = InlineKeyboardBuilder()
 
     async with get_session() as session:
-        for level in levels:
-            deck_count_result = await session.execute(
-                select(func.count(FlashcardDeck.id)).where(
-                    FlashcardDeck.level_id == level.id,
-                    FlashcardDeck.owner_id == None  # Faqat system decklar
-                )
-            )
-            deck_count = deck_count_result.scalar() or 0
+        result = await session.execute(
+            select(Level).where(Level.is_active == True).order_by(Level.display_order)
+        )
+        levels = result.scalars().all()
 
-            if deck_count == 0:
+        for level in levels:
+            # Count days (same as user shop)
+            day_count = (await session.execute(
+                select(func.count(Day.id)).where(
+                    Day.level_id == level.id,
+                    Day.is_active == True
+                )
+            )).scalar() or 0
+
+            if day_count == 0:
                 continue
 
+            # Count days that have flashcard decks
+            deck_linked = (await session.execute(
+                select(func.count(Day.id)).where(
+                    Day.level_id == level.id,
+                    Day.is_active == True,
+                    Day.id.in_(
+                        select(FlashcardDeck.day_id).where(
+                            FlashcardDeck.day_id != None,
+                            FlashcardDeck.owner_id == None
+                        )
+                    )
+                )
+            )).scalar() or 0
+
             icon = level_icons.get(level.name.upper().split()[0], "📚")
+            deck_info = f" (🃏 {deck_linked})" if deck_linked < day_count else " ✅"
             builder.row(InlineKeyboardButton(
-                text=f"{icon} {level.name} — {deck_count} ta deck",
+                text=f"{icon} {level.name} — {day_count} ta mavzu{deck_info}",
                 callback_data=f"admin:shop:decks_level:{level.id}"
             ))
 
@@ -131,7 +147,7 @@ async def admin_decks_list(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin:shop:decks_level:"))
 async def admin_decks_by_level(callback: CallbackQuery):
-    """Daraja ichidagi decklar"""
+    """Daraja ichidagi mavzular (Day) - user marketi bilan bir xil"""
     level_id = int(callback.data.split(":")[-1])
 
     level_icons = {
@@ -140,65 +156,109 @@ async def admin_decks_by_level(callback: CallbackQuery):
     }
 
     async with get_session() as session:
-        if level_id == 0:
-            # System decks without level
-            result = await session.execute(
+        level_result = await session.execute(
+            select(Level).where(Level.id == level_id)
+        )
+        level = level_result.scalar_one_or_none()
+        if not level:
+            await callback.answer("❌ Daraja topilmadi!", show_alert=True)
+            return
+
+        level_name = level.name
+        icon = level_icons.get(level.name.upper().split()[0], "📚")
+
+        # Get days (same as user shop)
+        days_result = await session.execute(
+            select(Day).where(
+                Day.level_id == level_id,
+                Day.is_active == True
+            ).order_by(Day.day_number)
+        )
+        days = days_result.scalars().all()
+
+        # Get deck info for each day
+        day_deck_map = {}
+        for day in days:
+            deck_result = await session.execute(
                 select(FlashcardDeck).where(
-                    FlashcardDeck.level_id == None,
+                    FlashcardDeck.day_id == day.id,
                     FlashcardDeck.owner_id == None
-                ).order_by(FlashcardDeck.display_order, FlashcardDeck.id)
+                ).limit(1)
             )
-            level_name = "Darajasiz"
-            icon = "📂"
-        else:
-            level_result = await session.execute(
-                select(Level).where(Level.id == level_id)
-            )
-            level = level_result.scalar_one_or_none()
-            if not level:
-                await callback.answer("❌ Daraja topilmadi!", show_alert=True)
-                return
+            deck = deck_result.scalar_one_or_none()
+            if deck:
+                day_deck_map[day.id] = deck
 
-            level_name = level.name
-            icon = level_icons.get(level.name.upper().split()[0], "📚")
-
-            result = await session.execute(
-                select(FlashcardDeck).where(
-                    FlashcardDeck.level_id == level_id,
-                    FlashcardDeck.owner_id == None  # Faqat system decklar
-                ).order_by(FlashcardDeck.display_order, FlashcardDeck.id)
-            )
-
-        decks = list(result.scalars().all())
-
-        # Get day names for decks
-        day_names = {}
-        for deck in decks:
-            if deck.day_id:
-                day_result = await session.execute(
-                    select(Day).where(Day.id == deck.day_id)
-                )
-                day = day_result.scalar_one_or_none()
-                if day:
-                    day_names[deck.id] = day.display_name
-
-    text = f"{icon} <b>{level_name} — Decklar</b>\n\n"
+    text = f"{icon} <b>{level_name} — Mavzular</b>\n\n"
+    text += f"✅ = Bepul | ⭐ = Premium | 🃏 = Deck bor | ❌ = Deck yo'q\n\n"
 
     builder = InlineKeyboardBuilder()
 
-    if not decks:
-        text += "<i>Bu darajada decklar yo'q.</i>\n"
+    if not days:
+        text += "<i>Bu darajada mavzular yo'q.</i>\n"
     else:
-        for deck in decks:
-            status = "✅" if deck.is_active else "❌"
-            premium = "⭐" if deck.is_premium else ""
-            display = day_names.get(deck.id, deck.name)
+        for day in days:
+            is_free = not day.is_premium and day.price == 0
+            has_deck = day.id in day_deck_map
+            deck = day_deck_map.get(day.id)
+
+            # Status icon
+            if is_free:
+                price_status = "🆓"
+            else:
+                price_status = f"⭐{day.price}"
+
+            deck_status = f"🃏{deck.cards_count}" if has_deck else "❌"
+            display = day.display_name
+
+            # Click -> deck detail if exists, otherwise just show info
+            if has_deck:
+                cb = f"admin:shop:deck:{deck.id}"
+            else:
+                cb = f"admin:shop:day_info:{day.id}"
+
             builder.row(InlineKeyboardButton(
-                text=f"{status} {display} ({deck.cards_count}) {premium}",
-                callback_data=f"admin:shop:deck:{deck.id}"
+                text=f"{price_status} {display} [{deck_status}]",
+                callback_data=cb
             ))
 
     builder.row(InlineKeyboardButton(text="◀️ Orqaga", callback_data="admin:shop:decks"))
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:shop:day_info:"))
+async def admin_day_info(callback: CallbackQuery):
+    """Mavzu tafsilotlari (deck yo'q bo'lganda)"""
+    from sqlalchemy import func
+    day_id = int(callback.data.split(":")[-1])
+
+    async with get_session() as session:
+        from src.database.models import Question
+        day_result = await session.execute(select(Day).where(Day.id == day_id))
+        day = day_result.scalar_one_or_none()
+
+        if not day:
+            await callback.answer("❌ Mavzu topilmadi!", show_alert=True)
+            return
+
+        q_count = (await session.execute(
+            select(func.count(Question.id)).where(Question.day_id == day_id)
+        )).scalar() or 0
+
+    is_free = not day.is_premium and day.price == 0
+    text = f"📋 <b>{day.display_name}</b>\n\n"
+    text += f"📊 Savollar: {q_count} ta\n"
+    text += f"🃏 Flashcard deck: ❌ Yo'q\n"
+    text += f"💰 Narx: {'Bepul' if is_free else f'{day.price} ⭐'}\n"
+    text += f"⭐ Premium: {'Ha' if day.is_premium else 'Yo`q'}\n"
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(
+        text="◀️ Orqaga",
+        callback_data=f"admin:shop:decks_level:{day.level_id}"
+    ))
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
