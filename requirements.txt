@@ -12,6 +12,7 @@ aiohttp>=3.9.0
 # ============================================================
 sqlalchemy[asyncio]==2.0.35
 asyncpg==0.29.0
+aiosqlite>=0.20.0
 alembic==1.14.0
 greenlet>=3.0.0
 

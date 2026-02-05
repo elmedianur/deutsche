@@ -308,8 +308,10 @@ def question_vote_keyboard(
 
 def premium_menu_keyboard(is_premium: bool = False) -> InlineKeyboardMarkup:
     """Premium menu keyboard"""
+    from src.config import settings
+
     builder = InlineKeyboardBuilder()
-    
+
     if is_premium:
         builder.row(
             InlineKeyboardButton(text="✅ Sizda Premium mavjud!", callback_data="premium:status")
@@ -317,19 +319,19 @@ def premium_menu_keyboard(is_premium: bool = False) -> InlineKeyboardMarkup:
     else:
         builder.row(
             InlineKeyboardButton(
-                text="⭐ 1 oy - 100 yulduz",
+                text=f"⭐ 1 oy - {settings.PREMIUM_MONTHLY_STARS} yulduz",
                 callback_data="premium:buy:monthly"
             )
         )
         builder.row(
             InlineKeyboardButton(
-                text="⭐ 1 yil - 1000 yulduz (40% chegirma!)",
+                text=f"⭐ 1 yil - {settings.PREMIUM_YEARLY_STARS} yulduz (40% chegirma!)",
                 callback_data="premium:buy:yearly"
             )
         )
         builder.row(
             InlineKeyboardButton(
-                text="💎 Lifetime - 5000 yulduz",
+                text=f"💎 Lifetime - {settings.PREMIUM_LIFETIME_STARS} yulduz",
                 callback_data="premium:buy:lifetime"
             )
         )

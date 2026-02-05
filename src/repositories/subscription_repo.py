@@ -125,7 +125,7 @@ class SubscriptionRepository(BaseRepository[Subscription]):
             )
             .values(plan=SubscriptionPlan.FREE)
         )
-        await self.session.commit()
+        await self.session.flush()
         return result.rowcount
 
 
@@ -207,6 +207,70 @@ class PaymentRepository(BaseRepository[Payment]):
             )
         )
         return result.scalar_one_or_none()
+
+    async def create_shop_payment(
+        self,
+        user_id: int,
+        amount: int,
+        item_type: str,
+        item_id: str,
+        charge_id: str = None,
+        provider_charge_id: str = None,
+    ) -> Payment:
+        """Shop/Topic to'lovi uchun Payment record yaratish va completed qilish.
+
+        Bu Premium subscription bilan bog'liq emas, shuning uchun
+        subscription_id = None bo'lishi mumkin emas.
+        Subscription topilmasa, get_or_create qilamiz.
+        """
+        from src.database.models import PaymentStatus
+
+        # Subscription kerak (foreign key constraint)
+        sub_repo = SubscriptionRepository(self.session)
+        sub = await sub_repo.get_or_create(user_id)
+
+        payment = Payment(
+            subscription_id=sub.id,
+            user_id=user_id,
+            amount=amount,
+            currency="XTR",
+            status=PaymentStatus.COMPLETED,
+            method=PaymentMethod.TELEGRAM_STARS,
+            plan_purchased=f"{item_type}:{item_id}",
+            days_added=0,
+            telegram_payment_charge_id=charge_id,
+            provider_payment_charge_id=provider_charge_id,
+        )
+        payment.complete(charge_id, provider_charge_id)
+        self.session.add(payment)
+        await self.session.flush()
+        return payment
+
+    async def get_total_revenue(
+        self,
+        since: Optional[datetime] = None
+    ) -> dict:
+        """Get total revenue stats"""
+        from sqlalchemy import func
+
+        query = (
+            select(
+                func.sum(Payment.amount).label("total"),
+                func.count().label("count")
+            )
+            .where(Payment.status == PaymentStatus.COMPLETED)
+        )
+
+        if since:
+            query = query.where(Payment.completed_at >= since)
+
+        result = await self.session.execute(query)
+        row = result.one()
+
+        return {
+            "total_stars": row.total or 0,
+            "total_payments": row.count or 0
+        }
 
 
 class PromoCodeRepository(BaseRepository[PromoCode]):

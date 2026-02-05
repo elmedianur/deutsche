@@ -7,6 +7,8 @@ from aiogram.types import (
     PreCheckoutQuery, SuccessfulPayment
 )
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from src.database.models import User
 from src.services import payment_service, PAYMENT_PLANS
@@ -19,6 +21,11 @@ from src.core.logging import get_logger
 
 logger = get_logger(__name__)
 router = Router(name="payment")
+
+
+class PromoState(StatesGroup):
+    """Promo kod kiritish holati"""
+    waiting_for_code = State()
 
 
 # ============================================================
@@ -75,8 +82,13 @@ Premium bilan til o'rganish ancha samarali!
 @router.callback_query(F.data.startswith("premium:buy:"))
 async def buy_premium(callback: CallbackQuery, db_user: User, bot: Bot):
     """Initiate premium purchase"""
+    from src.config import settings
+    if not settings.STARS_ENABLED:
+        await callback.answer("❌ To'lov tizimi hozircha o'chirilgan.", show_alert=True)
+        return
+
     plan_id = callback.data.split(":")[-1]
-    
+
     plan = payment_service.get_plan(plan_id)
     if not plan:
         await callback.answer("Noto'g'ri tarif", show_alert=True)
@@ -187,8 +199,9 @@ Endi barcha Premium imkoniyatlardan foydalanishingiz mumkin! 🚀
 # ============================================================
 
 @router.callback_query(F.data == "premium:promo")
-async def promo_menu(callback: CallbackQuery):
+async def promo_menu(callback: CallbackQuery, state: FSMContext):
     """Show promo code input"""
+    await state.set_state(PromoState.waiting_for_code)
     await callback.message.edit_text(
         "🎁 <b>Promo kod</b>\n\n"
         "Promo kodni yuboring:",
@@ -197,13 +210,31 @@ async def promo_menu(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.text.regexp(r'^[A-Za-z0-9]{4,20}$'))
-async def apply_promo(message: Message, db_user: User):
-    """Try to apply promo code"""
+@router.callback_query(F.data == "premium:menu", PromoState.waiting_for_code)
+async def cancel_promo_state(callback: CallbackQuery, state: FSMContext, db_user: User, is_premium: bool):
+    """Promo state dan chiqish va premium menyu ko'rsatish"""
+    await state.clear()
+    await premium_menu(callback, db_user, is_premium)
+
+
+@router.message(PromoState.waiting_for_code, F.text)
+async def apply_promo(message: Message, db_user: User, state: FSMContext):
+    """Try to apply promo code (faqat PromoState ichida ishlaydi)"""
     code = message.text.strip().upper()
-    
+
+    # Format tekshiruvi
+    if not code or len(code) < 4 or len(code) > 20 or not code.isalnum():
+        await message.answer(
+            "❌ Noto'g'ri format. Promo kod 4-20 ta harf/raqamdan iborat bo'lishi kerak.",
+            reply_markup=back_button("premium:menu")
+        )
+        return
+
     result = await payment_service.apply_promo_code(db_user.user_id, code)
-    
+
+    # Promo state ni tozalash
+    await state.clear()
+
     if result.get("success"):
         rewards_text = ", ".join(result.get("rewards", []))
         await message.answer(

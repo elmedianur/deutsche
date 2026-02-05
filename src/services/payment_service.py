@@ -113,18 +113,17 @@ class PaymentService(LoggerMixin):
         
         try:
             # Send invoice with Telegram Stars
+            # provider_token ni uzatmaslik kerak (XTR valyutasi uchun)
             message = await self.bot.send_invoice(
                 chat_id=chat_id,
                 title=plan["title"],
                 description=plan["description"],
                 payload=payload,
-                provider_token="",  # Empty for Telegram Stars
                 currency="XTR",  # Telegram Stars currency
                 prices=[
                     LabeledPrice(label=plan["title"], amount=plan["stars"])
                 ],
                 start_parameter=f"premium_{plan_id}",
-                protect_content=False
             )
             
             self.logger.info(

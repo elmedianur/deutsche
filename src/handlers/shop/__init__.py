@@ -898,6 +898,11 @@ async def show_popular(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("shop:buy:"))
 async def buy_item(callback: CallbackQuery, bot: Bot):
     """Mahsulot sotib olish"""
+    from src.config import settings
+    if not settings.STARS_ENABLED:
+        await callback.answer("❌ To'lov tizimi hozircha o'chirilgan.", show_alert=True)
+        return
+
     item_id = callback.data.split(":")[-1]
     item = SHOP_ITEMS.get(item_id)
 
@@ -984,8 +989,30 @@ async def buy_bundle(callback: CallbackQuery, bot: Bot):
     F.invoice_payload.startswith("daily:")
 )
 async def shop_pre_checkout(pre_checkout: PreCheckoutQuery):
-    """To'lovni tasdiqlash"""
-    await pre_checkout.answer(ok=True)
+    """To'lovni tasdiqlash - validatsiya bilan"""
+    try:
+        payload = pre_checkout.invoice_payload
+        # Payload formatini tekshirish
+        if not payload or ":" not in payload:
+            await pre_checkout.answer(ok=False, error_message="Noto'g'ri to'lov ma'lumoti")
+            return
+
+        prefix = payload.split(":")[0]
+        item_id = payload.split(":")[-1]
+
+        if prefix == "shop" or prefix == "daily":
+            if not SHOP_ITEMS.get(item_id):
+                await pre_checkout.answer(ok=False, error_message="Mahsulot topilmadi")
+                return
+        elif prefix == "bundle":
+            if not BUNDLES.get(item_id):
+                await pre_checkout.answer(ok=False, error_message="Paket topilmadi")
+                return
+
+        await pre_checkout.answer(ok=True)
+    except Exception as e:
+        logger.error(f"Shop pre_checkout error: {e}")
+        await pre_checkout.answer(ok=False, error_message="Xatolik yuz berdi")
 
 
 @router.message(
@@ -1002,13 +1029,14 @@ async def shop_successful_payment(message: Message, db_user: User):
     try:
         from src.database import get_session
         from src.repositories.inventory_repo import InventoryRepository
+        from src.repositories.subscription_repo import PaymentRepository
 
         if payload.startswith("shop:") or payload.startswith("daily:"):
             item_id = payload.split(":")[-1]
             item = SHOP_ITEMS.get(item_id)
 
             if item:
-                # Inventarga saqlash
+                # Inventarga saqlash + Payment record yaratish
                 async with get_session() as session:
                     inv_repo = InventoryRepository(session)
                     await inv_repo.add_item(
@@ -1018,6 +1046,17 @@ async def shop_successful_payment(message: Message, db_user: User):
                         quantity=item.get("quantity", 1),
                         stars_paid=payment.total_amount,
                         payment_id=charge_id
+                    )
+
+                    # Daromad statistikasi uchun Payment record
+                    payment_repo = PaymentRepository(session)
+                    await payment_repo.create_shop_payment(
+                        user_id=db_user.user_id,
+                        amount=payment.total_amount,
+                        item_type="shop_item",
+                        item_id=item_id,
+                        charge_id=charge_id,
+                        provider_charge_id=payment.provider_payment_charge_id,
                     )
 
                 await message.answer(
@@ -1045,7 +1084,7 @@ Rahmat xaridingiz uchun! 🙏
             bundle = BUNDLES.get(bundle_id)
 
             if bundle:
-                # Paketdagi barcha mahsulotlarni inventarga saqlash
+                # Paketdagi barcha mahsulotlarni inventarga saqlash + Payment record
                 async with get_session() as session:
                     inv_repo = InventoryRepository(session)
                     for bundle_item_id in bundle['items']:
@@ -1058,6 +1097,17 @@ Rahmat xaridingiz uchun! 🙏
                             stars_paid=0,
                             payment_id=charge_id
                         )
+
+                    # Daromad statistikasi uchun Payment record
+                    payment_repo = PaymentRepository(session)
+                    await payment_repo.create_shop_payment(
+                        user_id=db_user.user_id,
+                        amount=payment.total_amount,
+                        item_type="bundle",
+                        item_id=bundle_id,
+                        charge_id=charge_id,
+                        provider_charge_id=payment.provider_payment_charge_id,
+                    )
 
                 items_text = "\n".join([
                     f"   • {SHOP_ITEMS.get(i, {}).get('icon', '📦')} {SHOP_ITEMS.get(i, {}).get('name', i)}"
@@ -1554,7 +1604,7 @@ async def topic_get_free(callback: CallbackQuery, db_user: User):
             price_paid=0,
             payment_method="free"
         )
-        await session.commit()
+        # get_session() auto-commit qiladi
 
     await callback.answer("✅ Mavzu inventaringizga qo'shildi!", show_alert=True)
 
@@ -1625,7 +1675,7 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
             price_paid=price,
             payment_method="stars"
         )
-        await session.commit()
+        # get_session() auto-commit qiladi
 
         # Update in-memory db_user so UI reflects change
         db_user.stars = fresh_user.stars
@@ -1641,6 +1691,11 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
 @router.callback_query(F.data.startswith("shop:topic_buy_telegram:"))
 async def topic_buy_with_telegram_stars(callback: CallbackQuery, db_user: User, bot: Bot):
     """Telegram Stars (real payment) bilan mavzu sotib olish"""
+    from src.config import settings
+    if not settings.STARS_ENABLED:
+        await callback.answer("❌ To'lov tizimi hozircha o'chirilgan.", show_alert=True)
+        return
+
     from src.database import get_session
     from src.database.models.language import Day
     from sqlalchemy import select
@@ -1690,10 +1745,52 @@ async def topic_buy_with_telegram_stars(callback: CallbackQuery, db_user: User, 
 
 @router.pre_checkout_query(F.invoice_payload.startswith("topic:"))
 async def topic_pre_checkout(pre_checkout: PreCheckoutQuery):
-    """Topic to'lov tasdiqlash"""
-    logger.info(f"Topic pre_checkout received: payload={pre_checkout.invoice_payload}, user={pre_checkout.from_user.id}")
-    await pre_checkout.answer(ok=True)
-    logger.info("Topic pre_checkout answered OK")
+    """Topic to'lov tasdiqlash - validatsiya bilan"""
+    try:
+        payload = pre_checkout.invoice_payload
+        logger.info(f"Topic pre_checkout received: payload={payload}, user={pre_checkout.from_user.id}")
+
+        # day_id ni tekshirish
+        parts = payload.split(":")
+        if len(parts) != 2:
+            await pre_checkout.answer(ok=False, error_message="Noto'g'ri to'lov ma'lumoti")
+            return
+
+        day_id_str = parts[1]
+        try:
+            day_id = int(day_id_str)
+        except (ValueError, TypeError):
+            await pre_checkout.answer(ok=False, error_message="Noto'g'ri mavzu ID")
+            return
+
+        # Mavzu mavjudligini tekshirish
+        from src.database import get_session
+        from src.database.models.language import Day
+        from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+        from sqlalchemy import select
+
+        async with get_session() as session:
+            day_result = await session.execute(
+                select(Day.id).where(Day.id == day_id)
+            )
+            if not day_result.scalar_one_or_none():
+                await pre_checkout.answer(ok=False, error_message="Mavzu topilmadi")
+                return
+
+            # Allaqachon sotib olinganligini tekshirish
+            repo = TopicPurchaseRepository(session)
+            if await repo.has_purchased(pre_checkout.from_user.id, day_id):
+                await pre_checkout.answer(ok=False, error_message="Siz bu mavzuni allaqachon sotib olgansiz")
+                return
+
+        await pre_checkout.answer(ok=True)
+        logger.info("Topic pre_checkout answered OK")
+    except Exception as e:
+        logger.error(f"Topic pre_checkout error: {e}")
+        try:
+            await pre_checkout.answer(ok=False, error_message="Xatolik yuz berdi")
+        except Exception:
+            pass
 
 
 @router.message(F.successful_payment.invoice_payload.startswith("topic:"))
@@ -1714,6 +1811,7 @@ async def topic_successful_payment(message: Message, db_user: User):
     try:
         async with get_session() as session:
             from src.repositories.topic_purchase_repo import TopicPurchaseRepository
+            from src.repositories.subscription_repo import PaymentRepository
             repo = TopicPurchaseRepository(session)
 
             # Get day info
@@ -1731,7 +1829,17 @@ async def topic_successful_payment(message: Message, db_user: User):
                     payment_method="telegram_stars",
                     telegram_payment_id=charge_id
                 )
-                await session.commit()
+
+                # Daromad statistikasi uchun Payment record
+                payment_repo = PaymentRepository(session)
+                await payment_repo.create_shop_payment(
+                    user_id=db_user.user_id,
+                    amount=price,
+                    item_type="topic",
+                    item_id=str(day_id),
+                    charge_id=charge_id,
+                    provider_charge_id=message.successful_payment.provider_payment_charge_id,
+                )
 
                 # Find linked deck for flashcard button
                 deck_result = await session.execute(
