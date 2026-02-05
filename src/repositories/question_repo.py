@@ -1,12 +1,12 @@
 """
 Question repository - Question data access
 """
-import random
 from typing import List, Optional
 from sqlalchemy import select, func, and_
 
 from src.database.models import Question, QuestionVote, Day, Level, Language
 from src.repositories.base import BaseRepository
+from src.core.utils import secure_shuffle
 
 
 class QuestionRepository(BaseRepository[Question]):
@@ -110,7 +110,7 @@ class QuestionRepository(BaseRepository[Question]):
             questions = [q for q in questions if not q.is_premium]
         
         # Shuffle and limit
-        random.shuffle(questions)
+        questions = secure_shuffle(questions)
         return questions[:count]
     
     async def record_answer(
@@ -343,7 +343,7 @@ class QuestionRepository(BaseRepository[Question]):
                 )
             )
             all_questions = list(result.scalars().all())
-            random.shuffle(all_questions)
+            all_questions = secure_shuffle(all_questions)
 
             for q in all_questions:
                 if q not in selected_questions:
@@ -352,5 +352,5 @@ class QuestionRepository(BaseRepository[Question]):
                     break
 
         # Shuffle va limit
-        random.shuffle(selected_questions)
+        selected_questions = secure_shuffle(selected_questions)
         return selected_questions[:count]

@@ -3,7 +3,7 @@ Progress and Streak models
 """
 from datetime import datetime, date, timedelta, timezone
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, Float, ForeignKey, Integer, BigInteger, Date, DateTime, Boolean, UniqueConstraint
+from sqlalchemy import String, Float, ForeignKey, Integer, BigInteger, Date, DateTime, Boolean, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base, TimestampMixin
@@ -73,7 +73,13 @@ class UserProgress(Base, TimestampMixin):
         primaryjoin="User.user_id == UserProgress.user_id",
         lazy="joined"
     )
-    
+
+    # Database indexes for query performance
+    __table_args__ = (
+        Index('idx_user_progress_user_day', 'user_id', 'day_id'),
+        Index('idx_user_progress_user_completed', 'user_id', 'completed_at'),
+    )
+
     @property
     def percentage(self) -> float:
         """Score as percentage"""

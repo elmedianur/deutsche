@@ -6,6 +6,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, List
 from sqlalchemy import select, update, and_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.database.models.flashcard import (
     FlashcardDeck,
@@ -195,6 +196,9 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
                 UserFlashcard.next_review_date <= date.today(),
                 UserFlashcard.is_suspended == False
             )
+        ).options(
+            # N+1 query oldini olish - card va deck ni eager load qilish
+            selectinload(UserFlashcard.card).selectinload(Flashcard.deck)
         )
 
         if deck_id:

@@ -1,7 +1,6 @@
 """
 Quiz repository - database operations for questions, languages, progress
 """
-import random
 from datetime import datetime, date
 from typing import Optional, List, Tuple
 from sqlalchemy import select, func, and_, or_
@@ -14,6 +13,7 @@ from src.database.models import (
 )
 from src.repositories.base import BaseRepository
 from src.core.logging import get_logger
+from src.core.utils import secure_shuffle
 
 logger = get_logger(__name__)
 
@@ -146,7 +146,7 @@ class QuestionRepository(BaseRepository[Question]):
         questions = list(result.scalars().all())
         
         if shuffle:
-            random.shuffle(questions)
+            questions = secure_shuffle(questions)
         
         if limit:
             questions = questions[:limit]
@@ -180,7 +180,7 @@ class QuestionRepository(BaseRepository[Question]):
         questions = list(result.scalars().all())
         
         if shuffle:
-            random.shuffle(questions)
+            questions = secure_shuffle(questions)
         
         if limit:
             questions = questions[:limit]
@@ -220,7 +220,7 @@ class QuestionRepository(BaseRepository[Question]):
         result = await self.session.execute(query)
         questions = list(result.scalars().all())
         
-        random.shuffle(questions)
+        questions = secure_shuffle(questions)
         return questions[:count]
     
     async def record_answer(

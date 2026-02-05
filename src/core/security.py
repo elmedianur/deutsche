@@ -285,6 +285,16 @@ def verify_referral_code(code: str, user_id: int) -> bool:
 # PERMISSION CHECKS
 # ============================================================
 
+def is_admin(user_id: int) -> bool:
+    """Check if user is admin (regular or super)"""
+    return settings.is_admin(user_id)
+
+
+def is_super_admin(user_id: int) -> bool:
+    """Check if user is super admin"""
+    return settings.is_super_admin(user_id)
+
+
 def admin_required(func):
     """Decorator to require admin permission"""
     @wraps(func)

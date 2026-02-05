@@ -2,7 +2,6 @@
 Duel Handler - Foydalanuvchilar o'rtasida bellashuv
 YANGILANGAN: Thread-safe session management, memory leak tuzatildi
 """
-import random
 import asyncio
 import threading
 from datetime import datetime, timedelta

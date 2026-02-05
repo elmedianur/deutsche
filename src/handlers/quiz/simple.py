@@ -3,7 +3,6 @@ Simple Quiz Handler - Uses inline buttons for immediate response
 """
 from datetime import datetime
 from typing import Dict, Any, List
-import random
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -21,6 +20,7 @@ from src.repositories.spaced_rep_repo import SpacedRepetitionRepository
 from src.repositories.flashcard_repo import UserFlashcardRepository
 from src.keyboards.inline import language_keyboard, level_keyboard, day_keyboard, back_button
 from src.core.logging import get_logger
+from src.core.utils import secure_shuffle
 
 logger = get_logger(__name__)
 router = Router(name="simple_quiz")
@@ -266,7 +266,7 @@ async def send_question(message: Message, quiz_data: Dict, index: int):
     
     # Shuffle options
     options = list(enumerate(q["options"]))  # [(0, "A"), (1, "B"), ...]
-    random.shuffle(options)
+    options = secure_shuffle(options)
     
     # Build keyboard
     builder = InlineKeyboardBuilder()

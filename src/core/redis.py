@@ -24,8 +24,8 @@ _memory_store: Dict[str, Tuple[Any, Optional[float]]] = {}
 _memory_lock = threading.Lock()
 
 # Memory cleanup settings
-MEMORY_CLEANUP_INTERVAL = 60  # Har daqiqada cleanup
-MAX_MEMORY_ITEMS = 10000  # Maksimum item soni
+MEMORY_CLEANUP_INTERVAL = 10  # Tezroq cleanup - xotira to'lib ketmasligi uchun
+MAX_MEMORY_ITEMS = 1000  # Maksimum item soni - memory leak oldini olish
 _last_cleanup = 0
 
 

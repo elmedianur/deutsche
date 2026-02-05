@@ -2,7 +2,6 @@
 Learning handlers - Word learning mode
 Yangi so'zlarni o'rganish va Flashcard ga qo'shish
 """
-import random
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
 

@@ -1,7 +1,6 @@
 """
 Quiz service - business logic for quiz operations
 """
-import random
 import asyncio
 from datetime import datetime
 from typing import Optional, List, Dict, Any

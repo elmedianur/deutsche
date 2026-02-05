@@ -138,7 +138,14 @@ async def confirm_purchase(callback: CallbackQuery, db_user: User, bot: Bot):
 @router.pre_checkout_query()
 async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
     """Handle pre-checkout query"""
-    await payment_service.process_pre_checkout(pre_checkout)
+    try:
+        await payment_service.process_pre_checkout(pre_checkout)
+    except Exception as e:
+        logger.error(f"Pre-checkout error: {e}", exc_info=True)
+        try:
+            await pre_checkout.answer(ok=False, error_message="Xatolik yuz berdi")
+        except Exception:
+            pass
 
 
 @router.message(F.successful_payment)

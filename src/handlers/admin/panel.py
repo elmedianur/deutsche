@@ -18,7 +18,7 @@ from src.repositories import (
     LanguageRepository, LevelRepository, DayRepository
 )
 from src.core.logging import get_logger
-from src.config import settings
+from src.core.security import is_admin, is_super_admin
 from src.handlers.admin.shop_admin import router as shop_admin_router
 
 logger = get_logger(__name__)
@@ -57,16 +57,6 @@ class AdminStates(StatesGroup):
     waiting_card_front = State()
     waiting_card_back = State()
     waiting_card_example = State()
-
-
-def is_super_admin(user_id: int) -> bool:
-    """Check if user is super admin"""
-    return user_id in settings.SUPER_ADMIN_IDS
-
-
-def is_admin(user_id: int) -> bool:
-    """Check if user is admin or super admin"""
-    return user_id in settings.ADMIN_IDS or is_super_admin(user_id)
 
 
 def admin_menu_keyboard(is_super: bool = False) -> InlineKeyboardMarkup:

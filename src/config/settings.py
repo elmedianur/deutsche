@@ -101,6 +101,20 @@ class Settings(BaseSettings):
     TOURNAMENT_ENABLED: bool = Field(default=True)
     WEEKLY_TOURNAMENT_DAY: int = Field(default=0, ge=0, le=6, description="0=Monday")
     WEEKLY_TOURNAMENT_HOUR: int = Field(default=10, ge=0, le=23)
+
+    # Default Day prices (by level)
+    # Bu narxlar admin panel orqali o'zgartirilishi mumkin
+    DEFAULT_DAY_PRICES: dict = Field(
+        default={
+            "A1": 30,
+            "A2": 40,
+            "B1": 50,
+            "B2": 60,
+            "C1": 70,
+            "C2": 80,
+        },
+        description="Default prices for days by level name"
+    )
     
 
     

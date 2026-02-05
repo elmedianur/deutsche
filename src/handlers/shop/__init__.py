@@ -9,9 +9,9 @@ from src.database.models import User
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 from datetime import datetime
-import random
 
 from src.core.logging import get_logger
+from src.core.utils import secure_sample, secure_randint
 
 logger = get_logger(__name__)
 router = Router(name="shop")
@@ -819,11 +819,8 @@ async def show_bundles(callback: CallbackQuery):
 async def show_daily_deal(callback: CallbackQuery):
     """Kunlik maxsus taklif"""
     # Tasodifiy mahsulot tanlash (kunlik o'zgaradi)
-    today = datetime.now().strftime("%Y%m%d")
-    random.seed(int(today))
-
     all_items = list(SHOP_ITEMS.items())
-    daily_items = random.sample(all_items, min(5, len(all_items)))
+    daily_items = secure_sample(all_items, min(5, len(all_items)))
 
     text = """
 ╔═══════════════════════════════════╗
@@ -839,7 +836,7 @@ async def show_daily_deal(callback: CallbackQuery):
 
     for item_id, item in daily_items:
         # 20-40% chegirma
-        discount = random.randint(20, 40)
+        discount = secure_randint(20, 40)
         original = item['price']
         new_price = int(original * (100 - discount) / 100)
 

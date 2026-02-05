@@ -11,16 +11,18 @@ from src.database import get_session
 from src.database.models import FlashcardDeck, Language, Level, Day
 from src.repositories import FlashcardDeckRepository
 from src.core.logging import get_logger
-from src.config import settings
+from src.core.security import is_admin
 from sqlalchemy import select
 
 logger = get_logger(__name__)
 router = Router(name="shop_admin")
 
 
-def is_admin(user_id: int) -> bool:
-    """Check if user is admin"""
-    return user_id in settings.ADMIN_IDS or user_id in settings.SUPER_ADMIN_IDS
+# Constants
+MAX_ICON_LENGTH = 10
+MAX_CARDS_PREVIEW = 20
+INITIAL_CARD_FETCH_LIMIT = 50
+EXCEL_COLUMN_WIDTHS = [8, 8, 30, 25, 30, 12, 10]
 
 
 class ShopAdminStates(StatesGroup):
@@ -1404,9 +1406,9 @@ async def universal_import_command(message: Message, state: FSMContext, bot: Bot
                         continue
 
                     # Shuffle options for quiz (randomize position of correct answer)
-                    import random
+                    from src.core.utils import secure_shuffle
                     all_options = [correct_answer, wrong1, wrong2, wrong3]
-                    random.shuffle(all_options)
+                    all_options = secure_shuffle(all_options)
 
                     # Find correct option letter (A, B, C, D)
                     correct_index = all_options.index(correct_answer)

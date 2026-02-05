@@ -2,7 +2,6 @@
 Flashcard Handler - Database bilan ishlaydigan versiya
 SM-2 Spaced Repetition algoritmi bilan
 """
-import random
 from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 
@@ -29,6 +28,7 @@ from src.repositories import (
     LanguageRepository
 )
 from src.core.logging import get_logger
+from src.core.utils import secure_shuffle
 from src.services.xp_service import XPService
 from src.services.tts_service import generate_audio
 
@@ -219,7 +219,7 @@ async def flashcard_start_deck(callback: CallbackQuery, state: FSMContext, db_us
             "back_audio": card.back_audio_url
         })
 
-    random.shuffle(cards_data)
+    cards_data = secure_shuffle(cards_data)
 
     await state.update_data(
         deck_id=deck_id,
@@ -362,7 +362,7 @@ async def select_deck(callback: CallbackQuery, state: FSMContext, db_user: User)
             "back_audio": card.back_audio_url
         })
     
-    random.shuffle(cards_data)
+    cards_data = secure_shuffle(cards_data)
     
     # State ga saqlash
     await state.update_data(
@@ -423,7 +423,9 @@ async def send_flashcard(message, state: FSMContext):
             text,
             reply_markup=study_keyboard(show_back, index, len(cards))
         )
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        # Message edit ishlamasa, yangi xabar yuborish
+        logger.debug(f"Message edit failed, sending new: {e}")
         await message.answer(
             text,
             reply_markup=study_keyboard(show_back, index, len(cards))
@@ -688,7 +690,8 @@ async def show_results(message, state: FSMContext):
     try:
         user_id = data.get("user_id") or message.chat.id
         xp_stats = await XPService.get_user_stats(user_id)
-    except Exception:
+    except (KeyError, AttributeError, ValueError) as e:
+        logger.debug(f"XP stats fallback: {e}")
         xp_stats = {"xp": 0, "level": 1, "level_name": "Boshlang'ich", "progress_bar": "░░░░░░░░░░"}
     text = f"""
 {emoji} <b>Flashcard tugadi!</b>
@@ -718,7 +721,9 @@ Ertaga "Takrorlash" bo'limida ko'ring!</i>
     
     try:
         await message.edit_text(text, reply_markup=builder.as_markup())
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        # Message edit ishlamasa, yangi xabar yuborish
+        logger.debug(f"Message edit failed, sending new: {e}")
         await message.answer(text, reply_markup=builder.as_markup())
 
 
@@ -769,7 +774,7 @@ async def review_due_cards(callback: CallbackQuery, state: FSMContext, db_user: 
         await callback.answer("❌ Kartochkalar topilmadi!", show_alert=True)
         return
     
-    random.shuffle(cards_data)
+    cards_data = secure_shuffle(cards_data)
     
     await state.update_data(
         deck_id=None,

@@ -114,15 +114,15 @@ class Question(Base, TimestampMixin, ActiveMixin):
         Get shuffled options and correct index.
         Returns (shuffled_options, new_correct_index)
         """
-        import random
-        
+        from src.core.utils import secure_shuffle
+
         options_data = [
             ('A', self.option_a),
             ('B', self.option_b),
             ('C', self.option_c),
             ('D', self.option_d)
         ]
-        random.shuffle(options_data)
+        options_data = secure_shuffle(options_data)
         
         options = [opt[1] for opt in options_data]
         correct_index = next(
