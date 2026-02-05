@@ -109,7 +109,7 @@ class PaymentService(LoggerMixin):
                 method=PaymentMethod.TELEGRAM_STARS
             )
             
-            payload = f"{payment.id}:{user_id}:{plan_id}"
+            payload = f"premium:{payment.id}:{user_id}:{plan_id}"
         
         try:
             # Send invoice with Telegram Stars
@@ -161,14 +161,14 @@ class PaymentService(LoggerMixin):
         """
         try:
             payload_parts = pre_checkout.invoice_payload.split(":")
-            if len(payload_parts) != 3:
+            if len(payload_parts) != 4 or payload_parts[0] != "premium":
                 await pre_checkout.answer(
                     ok=False,
                     error_message="Invalid payment data"
                 )
                 return False
 
-            payment_id, user_id, plan_id = payload_parts
+            _, payment_id, user_id, plan_id = payload_parts
 
             # XAVFSIZLIK: Payload'dagi user_id haqiqiy foydalanuvchi bilan mos kelishini tekshirish
             # Bu IDOR (Insecure Direct Object Reference) hujumini oldini oladi
@@ -243,10 +243,10 @@ class PaymentService(LoggerMixin):
         """
         try:
             payload_parts = payment.invoice_payload.split(":")
-            if len(payload_parts) != 3:
+            if len(payload_parts) != 4 or payload_parts[0] != "premium":
                 raise PaymentFailedError("Invalid payment payload format")
 
-            payment_id, user_id, plan_id = payload_parts
+            _, payment_id, user_id, plan_id = payload_parts
 
             # XAVFSIZLIK: User ID validatsiyasi
             if int(user_id) != message.from_user.id:

@@ -135,7 +135,7 @@ async def confirm_purchase(callback: CallbackQuery, db_user: User, bot: Bot):
 # PAYMENT PROCESSING
 # ============================================================
 
-@router.pre_checkout_query()
+@router.pre_checkout_query(F.invoice_payload.startswith("premium:"))
 async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
     """Handle pre-checkout query"""
     try:
@@ -148,7 +148,7 @@ async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
             pass
 
 
-@router.message(F.successful_payment)
+@router.message(F.successful_payment.invoice_payload.startswith("premium:"))
 async def process_successful_payment(message: Message, db_user: User):
     """Handle successful payment"""
     payment = message.successful_payment

@@ -988,18 +988,38 @@ async def shop_pre_checkout(pre_checkout: PreCheckoutQuery):
     await pre_checkout.answer(ok=True)
 
 
-@router.message(F.successful_payment)
+@router.message(
+    F.successful_payment.invoice_payload.startswith("shop:") |
+    F.successful_payment.invoice_payload.startswith("bundle:") |
+    F.successful_payment.invoice_payload.startswith("daily:")
+)
 async def shop_successful_payment(message: Message, db_user: User):
     """Muvaffaqiyatli to'lov"""
     payment = message.successful_payment
     payload = payment.invoice_payload
+    charge_id = payment.telegram_payment_charge_id
 
     try:
+        from src.database import get_session
+        from src.repositories.inventory_repo import InventoryRepository
+
         if payload.startswith("shop:") or payload.startswith("daily:"):
             item_id = payload.split(":")[-1]
             item = SHOP_ITEMS.get(item_id)
 
             if item:
+                # Inventarga saqlash
+                async with get_session() as session:
+                    inv_repo = InventoryRepository(session)
+                    await inv_repo.add_item(
+                        user_id=db_user.user_id,
+                        item_id=item_id,
+                        item_type="item",
+                        quantity=item.get("quantity", 1),
+                        stars_paid=payment.total_amount,
+                        payment_id=charge_id
+                    )
+
                 await message.answer(
                     f"""
 ╔═══════════════════════════════════╗
@@ -1018,13 +1038,27 @@ Rahmat xaridingiz uchun! 🙏
                         [InlineKeyboardButton(text="🏠 Menyu", callback_data="menu:main")]
                     ])
                 )
-                logger.info(f"Purchase: user={db_user.user_id}, item={item_id}")
+                logger.info(f"Purchase: user={db_user.user_id}, item={item_id}, charge={charge_id}")
 
         elif payload.startswith("bundle:"):
             bundle_id = payload.split(":")[-1]
             bundle = BUNDLES.get(bundle_id)
 
             if bundle:
+                # Paketdagi barcha mahsulotlarni inventarga saqlash
+                async with get_session() as session:
+                    inv_repo = InventoryRepository(session)
+                    for bundle_item_id in bundle['items']:
+                        bundle_item = SHOP_ITEMS.get(bundle_item_id, {})
+                        await inv_repo.add_item(
+                            user_id=db_user.user_id,
+                            item_id=bundle_item_id,
+                            item_type="item",
+                            quantity=bundle_item.get("quantity", 1),
+                            stars_paid=0,
+                            payment_id=charge_id
+                        )
+
                 items_text = "\n".join([
                     f"   • {SHOP_ITEMS.get(i, {}).get('icon', '📦')} {SHOP_ITEMS.get(i, {}).get('name', i)}"
                     for i in bundle['items']
@@ -1049,7 +1083,7 @@ Rahmat xaridingiz uchun! 🙏
                         [InlineKeyboardButton(text="🏠 Menyu", callback_data="menu:main")]
                     ])
                 )
-                logger.info(f"Bundle: user={db_user.user_id}, bundle={bundle_id}")
+                logger.info(f"Bundle: user={db_user.user_id}, bundle={bundle_id}, charge={charge_id}")
 
     except Exception as e:
         logger.error(f"Payment processing error: {e}")
@@ -1524,9 +1558,9 @@ async def topic_get_free(callback: CallbackQuery, db_user: User):
 
     await callback.answer("✅ Mavzu inventaringizga qo'shildi!", show_alert=True)
 
-    # Refresh topic info page
-    callback.data = f"shop:topic_info:{day_id}"
-    await topic_info(callback, db_user)
+    # Refresh topic info page (use model_copy to avoid frozen instance error)
+    new_callback = callback.model_copy(update={"data": f"shop:topic_info:{day_id}"})
+    await topic_info(new_callback, db_user)
 
 
 @router.callback_query(F.data.startswith("shop:topic_buy_stars:"))
@@ -1599,9 +1633,9 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
     await callback.answer(f"✅ Mavzu sotib olindi! (-{price}⭐)", show_alert=True)
     logger.info(f"Topic purchase (stars): user={db_user.user_id}, day={day_id}, price={price}")
 
-    # Refresh topic info page
-    callback.data = f"shop:topic_info:{day_id}"
-    await topic_info(callback, db_user)
+    # Refresh topic info page (use model_copy to avoid frozen instance error)
+    new_callback = callback.model_copy(update={"data": f"shop:topic_info:{day_id}"})
+    await topic_info(new_callback, db_user)
 
 
 @router.callback_query(F.data.startswith("shop:topic_buy_telegram:"))
@@ -1631,11 +1665,14 @@ async def topic_buy_with_telegram_stars(callback: CallbackQuery, db_user: User, 
             return
 
     price = day.price
+    logger.info(f"Telegram Stars purchase attempt: user={db_user.user_id}, day={day_id}, price={price}")
+
     if price <= 0:
         await callback.answer("Bu mavzu bepul!", show_alert=True)
         return
 
     try:
+        logger.info(f"Sending invoice: chat_id={callback.message.chat.id}, amount={price}")
         await bot.send_invoice(
             chat_id=callback.message.chat.id,
             title=f"📚 {day.display_name}",
@@ -1644,16 +1681,19 @@ async def topic_buy_with_telegram_stars(callback: CallbackQuery, db_user: User, 
             currency="XTR",
             prices=[LabeledPrice(label=day.display_name, amount=price)]
         )
+        logger.info(f"Invoice sent successfully for day={day_id}")
         await callback.answer()
     except Exception as e:
-        logger.error(f"Topic invoice error: {e}")
+        logger.error(f"Topic invoice error: {e}", exc_info=True)
         await callback.answer("❌ Xatolik!", show_alert=True)
 
 
 @router.pre_checkout_query(F.invoice_payload.startswith("topic:"))
 async def topic_pre_checkout(pre_checkout: PreCheckoutQuery):
     """Topic to'lov tasdiqlash"""
+    logger.info(f"Topic pre_checkout received: payload={pre_checkout.invoice_payload}, user={pre_checkout.from_user.id}")
     await pre_checkout.answer(ok=True)
+    logger.info("Topic pre_checkout answered OK")
 
 
 @router.message(F.successful_payment.invoice_payload.startswith("topic:"))
@@ -1668,6 +1708,8 @@ async def topic_successful_payment(message: Message, db_user: User):
     day_id = int(payload.split(":")[-1])
     price = message.successful_payment.total_amount
     charge_id = message.successful_payment.telegram_payment_charge_id
+
+    logger.info(f"Topic successful_payment: user={db_user.user_id}, day={day_id}, price={price}, charge={charge_id}")
 
     try:
         async with get_session() as session:

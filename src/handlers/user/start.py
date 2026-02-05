@@ -37,7 +37,28 @@ async def start_with_referral(
     
     if not referral_code:
         return await start_command(message, db_user)
-    
+
+    # Check if it's a payment deep link (from forwarded invoice)
+    if referral_code.startswith("premium_"):
+        plan_id = referral_code[8:]  # Remove "premium_" prefix
+        from src.services import payment_service
+        plan = payment_service.get_plan(plan_id)
+        if plan:
+            try:
+                await payment_service.create_invoice(
+                    chat_id=message.chat.id,
+                    user_id=db_user.user_id,
+                    plan_id=plan_id
+                )
+                return
+            except Exception as e:
+                logger.error(f"Deep link payment error: {e}")
+                await message.answer(
+                    "❌ To'lov yaratishda xatolik yuz berdi. Keyinroq urinib ko'ring."
+                )
+                return
+        # Invalid plan - fall through to regular start
+
     # Check if it's a referral code
     if referral_code.startswith("ref_"):
         code = referral_code[4:]
