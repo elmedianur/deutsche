@@ -65,7 +65,8 @@ async def create_dispatcher() -> Dispatcher:
     # Register middlewares (order matters!)
     dp.message.middleware(LoggingMiddleware())
     dp.callback_query.middleware(LoggingMiddleware())
-    
+    dp.pre_checkout_query.middleware(LoggingMiddleware())
+
     dp.message.middleware(RateLimitMiddleware())
     dp.callback_query.middleware(RateLimitMiddleware())
     
@@ -102,6 +103,15 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     dp.include_router(flashcard_router)
     dp.include_router(tournament_router)
     dp.include_router(shop_router)
+
+    # Fallback pre_checkout handler - noma'lum to'lovlarni RAD ETISH
+    from aiogram.types import PreCheckoutQuery
+
+    @dp.pre_checkout_query()
+    async def fallback_pre_checkout(pre_checkout: PreCheckoutQuery):
+        """Noma'lum to'lov turlarini rad etish"""
+        logger.warning(f"Noma'lum to'lov rad etildi: {pre_checkout.invoice_payload}")
+        await pre_checkout.answer(ok=False, error_message="Noma'lum to'lov turi. Iltimos qaytadan urinib ko'ring.")
 
     logger.info("Handlers registered")
 
@@ -241,7 +251,7 @@ async def cleanup_expired_items():
                 .values(is_active=False)
             )
             result = await session.execute(stmt)
-            await session.commit()
+            # get_session() auto-commits on exit
             logger.info(f"Expired items cleaned up: {result.rowcount} items")
     except Exception as e:
         logger.error(f"Cleanup error: {e}")
@@ -367,7 +377,7 @@ async def check_subscription_expiry(bot: Bot):
                     .where(User.user_id.in_(expired_user_ids))
                     .values(is_premium=False)
                 )
-                await session.commit()
+                # get_session() auto-commits on exit
 
                 logger.info(f"Premium status removed from {len(expired_user_ids)} users")
 
@@ -473,22 +483,24 @@ def setup_scheduler(bot: Bot):
 async def on_startup(bot: Bot) -> None:
     """Startup hook"""
     logger.info("Starting up...")
-    
+
     # Initialize database
     await init_database()
-    
+
     # Initialize achievements
-    await achievement_service.initialize_achievements()
-    
+    try:
+        await achievement_service.initialize_achievements()
+    except Exception as e:
+        logger.error(f"Achievement initialization failed: {e}")
+
     # Set bot for payment service
     payment_service.set_bot(bot)
-    
+
     # Set webhook if enabled
     if settings.WEBHOOK_ENABLED and settings.WEBHOOK_URL:
-        # Xavfsizlik ogohlantirishi
         if not settings.WEBHOOK_SECRET:
             logger.warning(
-                "⚠️ WEBHOOK_SECRET sozlanmagan! "
+                "WEBHOOK_SECRET sozlanmagan! "
                 "Production muhitida WEBHOOK_SECRET ishlatish tavsiya etiladi."
             )
         await bot.set_webhook(
@@ -496,28 +508,40 @@ async def on_startup(bot: Bot) -> None:
             secret_token=settings.WEBHOOK_SECRET.get_secret_value() if settings.WEBHOOK_SECRET else None
         )
         logger.info(f"Webhook set to {settings.WEBHOOK_URL}")
-    
+
     # Setup scheduler
-    setup_scheduler(bot)
-    logger.info("Scheduler started")
-    
+    try:
+        setup_scheduler(bot)
+        logger.info("Scheduler started")
+    except Exception as e:
+        logger.error(f"Scheduler setup failed: {e}")
+
     # Get bot info
-    me = await bot.get_me()
-    logger.info(f"Bot started: @{me.username}")
+    try:
+        me = await bot.get_me()
+        logger.info(f"Bot started: @{me.username}")
+    except Exception as e:
+        logger.error(f"Failed to get bot info: {e}")
 
 
 async def on_shutdown(bot: Bot) -> None:
     """Shutdown hook"""
     logger.info("Shutting down...")
-    
+
+    # Shutdown scheduler
+    global scheduler
+    if scheduler:
+        scheduler.shutdown(wait=False)
+        logger.info("Scheduler stopped")
+
     # Delete webhook
     if settings.WEBHOOK_ENABLED:
         await bot.delete_webhook()
-    
+
     # Close connections
     await close_redis()
     await close_database()
-    
+
     logger.info("Shutdown complete")
 
 

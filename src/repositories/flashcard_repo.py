@@ -7,6 +7,7 @@ from typing import Optional, List
 from sqlalchemy import select, update, and_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from src.core.utils import utc_today
 
 from src.database.models.flashcard import (
     FlashcardDeck,
@@ -132,10 +133,10 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
                 easiness_factor=2.5,
                 interval=0,
                 repetitions=0,
-                next_review_date=date.today()
+                next_review_date=utc_today()
             )
             self.session.add(user_card)
-            await self.session.commit()
+            await self.session.flush()
             await self.session.refresh(user_card)
 
         return user_card
@@ -154,7 +155,7 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
             # Noto'g'ri javob - qaytadan boshlash
             user_card.repetitions = 0
             user_card.interval = 0
-            user_card.next_review_date = date.today()
+            user_card.next_review_date = utc_today()
         else:
             # To'g'ri javob
             if user_card.repetitions == 0:
@@ -165,7 +166,7 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
                 user_card.interval = int(user_card.interval * user_card.easiness_factor)
 
             user_card.repetitions += 1
-            user_card.next_review_date = date.today() + timedelta(days=user_card.interval)
+            user_card.next_review_date = utc_today() + timedelta(days=user_card.interval)
 
         # Ease factor yangilash
         user_card.easiness_factor = max(
@@ -173,13 +174,13 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
             user_card.easiness_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
         )
 
-        user_card.last_review_date = date.today()
+        user_card.last_review_date = utc_today()
         user_card.total_reviews += 1
 
         if quality >= 3:
             user_card.correct_reviews += 1
 
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(user_card)
         return user_card
 
@@ -193,7 +194,7 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
         query = select(UserFlashcard).where(
             and_(
                 UserFlashcard.user_id == user_id,
-                UserFlashcard.next_review_date <= date.today(),
+                UserFlashcard.next_review_date <= utc_today(),
                 UserFlashcard.is_suspended == False
             )
         ).options(
@@ -226,7 +227,7 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
         total = len(cards)
         learned = sum(1 for c in cards if c.repetitions >= 3)
         learning = sum(1 for c in cards if 0 < c.repetitions < 3)
-        due = sum(1 for c in cards if c.next_review_date <= date.today())
+        due = sum(1 for c in cards if c.next_review_date <= utc_today())
 
         total_reviews = sum(c.total_reviews for c in cards)
         correct_reviews = sum(c.correct_reviews for c in cards)
@@ -267,7 +268,7 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
             card.is_suspended = True
         
         if cards:
-            await self.session.commit()
+            await self.session.flush()
         
         return len(cards)
 
@@ -290,7 +291,7 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
             .values(is_suspended=True)
         )
         
-        await self.session.commit()
+        await self.session.flush()
         
         return {
             "total_suspended": result.rowcount,
@@ -315,7 +316,7 @@ class UserFlashcardRepository(BaseRepository[UserFlashcard]):
         
         if card:
             card.is_suspended = False
-            await self.session.commit()
+            await self.session.flush()
             await self.session.refresh(card)
         
         return card
@@ -366,7 +367,7 @@ class UserDeckProgressRepository(BaseRepository[UserDeckProgress]):
                 deck_id=deck_id
             )
             self.session.add(progress)
-            await self.session.commit()
+            await self.session.flush()
             await self.session.refresh(progress)
 
         return progress
@@ -383,9 +384,9 @@ class UserDeckProgressRepository(BaseRepository[UserDeckProgress]):
 
         progress.cards_seen += cards_studied
         progress.total_reviews += cards_studied
-        progress.last_review_date = date.today()
+        progress.last_review_date = utc_today()
 
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(progress)
         return progress
 
@@ -420,7 +421,7 @@ async def get_or_create_quiz_errors_deck(session) -> FlashcardDeck:
             cards_count=0
         )
         session.add(deck)
-        await session.commit()
+        await session.flush()
         await session.refresh(deck)
     
     return deck
@@ -459,12 +460,12 @@ async def add_question_to_flashcard(
             is_active=True
         )
         session.add(card)
-        await session.commit()
+        await session.flush()
         await session.refresh(card)
         
         # Deck cards_count yangilash
         deck.cards_count += 1
-        await session.commit()
+        await session.flush()
     
     # User uchun flashcard progress
     result = await session.execute(
@@ -483,11 +484,11 @@ async def add_question_to_flashcard(
             easiness_factor=2.5,
             interval=0,
             repetitions=0,
-            next_review_date=date.today(),
+            next_review_date=utc_today(),
             is_suspended=False
         )
         session.add(user_card)
-        await session.commit()
+        await session.flush()
         return True  # Yangi qo'shildi
     
     return False  # Allaqachon bor
@@ -525,11 +526,11 @@ class DailyLimitManager:
             }
         
         # Kun o'zgargan bo'lsa reset qilish
-        today = date.today()
+        today = utc_today()
         if progress.last_review_date and progress.last_review_date < today:
             progress.new_cards_today = 0
             progress.reviews_today = 0
-            await self.session.commit()
+            await self.session.flush()
         
         return {
             "new_cards_limit": progress.daily_new_cards,
@@ -547,7 +548,7 @@ class DailyLimitManager:
         progress = await progress_repo.get_or_create(user_id, deck_id)
         
         # Kun o'zgargan bo'lsa reset
-        today = date.today()
+        today = utc_today()
         if progress.last_review_date and progress.last_review_date < today:
             progress.new_cards_today = 0
             progress.reviews_today = 0
@@ -557,7 +558,7 @@ class DailyLimitManager:
             progress.new_cards_today += 1
         progress.last_review_date = today
         
-        await self.session.commit()
+        await self.session.flush()
         
         return {
             "new_cards_remaining": max(0, progress.daily_new_cards - progress.new_cards_today),
@@ -614,7 +615,7 @@ class DailyLimitManager:
         if review_limit is not None:
             progress.daily_review_limit = max(10, min(200, review_limit))
         
-        await self.session.commit()
+        await self.session.flush()
         
         return {
             "new_cards_limit": progress.daily_new_cards,
@@ -772,7 +773,7 @@ class ExtendedStatsManager:
             return {"current": 0, "best": 0, "last_review": None}
         
         last_review = max(review_dates)
-        today = date.today()
+        today = utc_today()
         
         # Joriy streak
         current_streak = 0
@@ -973,7 +974,7 @@ class FlashcardExportImport:
             except Exception as e:
                 errors.append(str(e))
         
-        await self.session.commit()
+        await self.session.flush()
         
         # Update deck cards count
         deck_repo = FlashcardDeckRepository(self.session)
@@ -984,7 +985,7 @@ class FlashcardExportImport:
                 select(func.count(Flashcard.id)).where(Flashcard.deck_id == deck_id)
             )
             deck.cards_count = count_result.scalar() or 0
-            await self.session.commit()
+            await self.session.flush()
         
         return {
             'imported': imported,
@@ -1073,7 +1074,7 @@ class SRTuningManager:
         if easy_bonus is not None:
             progress.sr_easy_bonus = max(1.0, min(2.0, easy_bonus))
         
-        await self.session.commit()
+        await self.session.flush()
         
         return await self.get_user_sr_settings(user_id, deck_id)
     

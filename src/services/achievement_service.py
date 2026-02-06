@@ -52,7 +52,7 @@ class AchievementService(LoggerMixin):
                     session.add(achievement)
                     created += 1
             
-            await session.commit()
+            await session.flush()
             
             self.logger.info(f"Initialized {created} achievements")
             return created
@@ -126,7 +126,7 @@ class AchievementService(LoggerMixin):
                     achievement=achievement.code
                 )
             
-            await session.commit()
+            await session.flush()
         
         # Apply rewards for awarded achievements
         if awarded:
@@ -243,7 +243,7 @@ class AchievementService(LoggerMixin):
                 ua.notified = True
                 achievements.append(ua.achievement)
             
-            await session.commit()
+            await session.flush()
             
             return achievements
     

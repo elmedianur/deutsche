@@ -928,13 +928,30 @@ async def buy_item(callback: CallbackQuery, bot: Bot):
 @router.callback_query(F.data.startswith("shop:daily_buy:"))
 async def buy_daily_item(callback: CallbackQuery, bot: Bot):
     """Kunlik chegirmali mahsulot"""
+    from src.config import settings
+    if not settings.STARS_ENABLED:
+        await callback.answer("❌ To'lov tizimi hozircha o'chirilgan.", show_alert=True)
+        return
+
     parts = callback.data.split(":")
+    if len(parts) < 4:
+        await callback.answer("❌ Noto'g'ri format!", show_alert=True)
+        return
     item_id = parts[2]
-    price = int(parts[3])
+    try:
+        price = int(parts[3])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Noto'g'ri narx formati!", show_alert=True)
+        return
     item = SHOP_ITEMS.get(item_id)
 
     if not item:
         await callback.answer("❌ Mahsulot topilmadi!", show_alert=True)
+        return
+
+    # Xavfsizlik: narx asl narxdan oshmasligi kerak
+    if price <= 0 or price > item['price']:
+        await callback.answer("❌ Noto'g'ri narx!", show_alert=True)
         return
 
     try:
@@ -955,6 +972,11 @@ async def buy_daily_item(callback: CallbackQuery, bot: Bot):
 @router.callback_query(F.data.startswith("shop:bundle:"))
 async def buy_bundle(callback: CallbackQuery, bot: Bot):
     """Paket sotib olish"""
+    from src.config import settings
+    if not settings.STARS_ENABLED:
+        await callback.answer("❌ To'lov tizimi hozircha o'chirilgan.", show_alert=True)
+        return
+
     bundle_id = callback.data.split(":")[-1]
     bundle = BUNDLES.get(bundle_id)
 
@@ -1545,13 +1567,13 @@ async def topic_info(callback: CallbackQuery, db_user: User):
             callback_data=f"shop:topic_get_free:{day_id}"
         ))
     else:
-        # Paid - show purchase options
+        # Paid - ikkala usulda sotib olish
         builder.row(InlineKeyboardButton(
             text=f"⭐ {day.price} Stars bilan sotib olish",
             callback_data=f"shop:topic_buy_stars:{day_id}"
         ))
         builder.row(InlineKeyboardButton(
-            text=f"💳 Telegram Stars bilan sotib olish",
+            text=f"💳 {day.price} Telegram Stars bilan sotib olish",
             callback_data=f"shop:topic_buy_telegram:{day_id}"
         ))
 
@@ -1627,7 +1649,6 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
         from src.repositories.topic_purchase_repo import TopicPurchaseRepository
         repo = TopicPurchaseRepository(session)
 
-        # Get day
         day_result = await session.execute(
             select(Day).where(Day.id == day_id)
         )
@@ -1637,12 +1658,11 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
             await callback.answer("❌ Mavzu topilmadi!", show_alert=True)
             return
 
-        # Already purchased?
         if await repo.has_topic_access(db_user.user_id, day_id):
             await callback.answer("Siz allaqachon bu mavzuga kirishingiz mumkin!", show_alert=True)
             return
 
-        # Fetch fresh user from DB for accurate balance
+        # Fresh user data olish (stars balansini tekshirish uchun)
         fresh_user_result = await session.execute(
             select(UserModel).where(UserModel.user_id == db_user.user_id)
         )
@@ -1652,23 +1672,31 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
             await callback.answer("❌ Foydalanuvchi topilmadi!", show_alert=True)
             return
 
-        # Check balance
         price = day.price
         current_stars = fresh_user.stars or 0
+
         if current_stars < price:
             await callback.answer(
-                f"❌ Yetarli stars yo'q!\n\nKerak: {price}⭐\nBalans: {current_stars}⭐\n\nTelegram Stars bilan sotib olishga urinib ko'ring!",
+                f"❌ Yetarli stars yo'q!\n\nKerak: {price}⭐\nBalans: {current_stars}⭐",
                 show_alert=True
             )
             return
 
-        # Deduct stars from fresh DB object
-        success = fresh_user.remove_stars(price)
-        if not success:
+        # Atomic SQL decrement (race condition oldini olish)
+        from sqlalchemy import update as sql_update
+        result = await session.execute(
+            sql_update(UserModel)
+            .where(
+                UserModel.user_id == db_user.user_id,
+                UserModel.stars >= price  # DB-level balance check
+            )
+            .values(stars=UserModel.stars - price)
+        )
+        if result.rowcount == 0:
             await callback.answer("❌ Balans yetarli emas!", show_alert=True)
             return
 
-        # Create purchase
+        # Mavzuni sotib olish
         await repo.purchase_topic(
             user_id=db_user.user_id,
             day_id=day_id,
@@ -1677,13 +1705,12 @@ async def topic_buy_with_stars(callback: CallbackQuery, db_user: User):
         )
         # get_session() auto-commit qiladi
 
-        # Update in-memory db_user so UI reflects change
-        db_user.stars = fresh_user.stars
+        # db_user balansini yangilash
+        db_user.stars = current_stars - price
 
     await callback.answer(f"✅ Mavzu sotib olindi! (-{price}⭐)", show_alert=True)
-    logger.info(f"Topic purchase (stars): user={db_user.user_id}, day={day_id}, price={price}")
 
-    # Refresh topic info page (use model_copy to avoid frozen instance error)
+    # Sahifani yangilash
     new_callback = callback.model_copy(update={"data": f"shop:topic_info:{day_id}"})
     await topic_info(new_callback, db_user)
 
@@ -1727,16 +1754,29 @@ async def topic_buy_with_telegram_stars(callback: CallbackQuery, db_user: User, 
         return
 
     try:
-        logger.info(f"Sending invoice: chat_id={callback.message.chat.id}, amount={price}")
-        await bot.send_invoice(
-            chat_id=callback.message.chat.id,
+        logger.info(f"Creating invoice link: day={day_id}, amount={price}")
+
+        # Invoice link yaratish - bu barcha platformalarda ishlaydi
+        invoice_link = await bot.create_invoice_link(
             title=f"📚 {day.display_name}",
             description=f"{day.description or day.topic or 'Premium mavzu'}\n\n✅ Quiz + Flashcard birga ochiladi!",
             payload=f"topic:{day_id}",
             currency="XTR",
             prices=[LabeledPrice(label=day.display_name, amount=price)]
         )
-        logger.info(f"Invoice sent successfully for day={day_id}")
+        logger.info(f"Invoice link created for day={day_id}")
+
+        # Xabarni yangilash - URL tugma bilan
+        await callback.message.edit_text(
+            f"💳 <b>To'lov</b>\n\n"
+            f"📚 <b>{day.display_name}</b>\n"
+            f"💰 Narx: <b>{price} ⭐</b>\n\n"
+            f"To'lovni amalga oshirish uchun quyidagi tugmani bosing:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"⭐ {price} Stars to'lash", url=invoice_link)],
+                [InlineKeyboardButton(text="◀️ Orqaga", callback_data=f"shop:topic_info:{day_id}")]
+            ])
+        )
         await callback.answer()
     except Exception as e:
         logger.error(f"Topic invoice error: {e}", exc_info=True)

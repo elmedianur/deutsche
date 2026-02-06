@@ -81,7 +81,7 @@ class TournamentService:
             
             # Faol qilish
             tournament.status = TournamentStatus.ACTIVE
-            await session.commit()
+            await session.flush()
             
             logger.info(f"New weekly tournament created: {tournament.id}")
             return tournament
@@ -365,7 +365,7 @@ async def finish_expired_tournaments():
                 tournament.status = TournamentStatus.FINISHED
                 finished_tournaments.append(tournament.name)
             
-            await session.commit()
+            await session.flush()
             return finished_tournaments if finished_tournaments else None
             
     except Exception as e:

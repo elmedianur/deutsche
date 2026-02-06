@@ -18,6 +18,7 @@ from src.database import get_session
 from src.repositories import QuestionRepository, UserRepository, ProgressRepository
 from src.database.models import User
 from src.core.logging import get_logger
+from src.core.utils import utc_today
 
 logger = get_logger(__name__)
 router = Router(name="duel")
@@ -549,8 +550,8 @@ async def finish_duel(duel_id: str, bot: Bot):
                                 sr.interval = 1
                                 sr.easiness_factor = max(1.3, sr.easiness_factor - 0.2)
 
-                            sr.last_review_date = date.today()
-                            sr.next_review_date = date.today() + timedelta(days=sr.interval)
+                            sr.last_review_date = utc_today()
+                            sr.next_review_date = utc_today() + timedelta(days=sr.interval)
                         else:
                             # Yangi yaratish
                             sr = SpacedRepetition(
@@ -561,8 +562,8 @@ async def finish_duel(duel_id: str, bot: Bot):
                                 easiness_factor=2.5 if is_correct else 2.3,
                                 repetitions=1 if is_correct else 0,
                                 interval=1,
-                                last_review_date=date.today(),
-                                next_review_date=date.today() + timedelta(days=1)
+                                last_review_date=utc_today(),
+                                next_review_date=utc_today() + timedelta(days=1)
                             )
                             session.add(sr)
 
@@ -576,7 +577,7 @@ async def finish_duel(duel_id: str, bot: Bot):
                 await duel_stats_repo.record_duel_result(player1["id"], won=False, is_draw=True)
                 await duel_stats_repo.record_duel_result(player2["id"], won=False, is_draw=True)
 
-            await session.commit()
+            # get_session() auto-commits on exit
             logger.info(f"Duel results and stats saved: {player1['id']} vs {player2['id']}")
     except Exception as e:
         logger.error(f"Error saving duel results: {e}")

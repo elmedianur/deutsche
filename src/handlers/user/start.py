@@ -95,7 +95,7 @@ async def start_with_referral(
                             required_quizzes=settings.REFERRAL_MIN_QUIZZES
                         )
                         session.add(referral)
-                        await session.commit()
+                        await session.flush()  # get_session() auto-commits
                     
                     await message.answer(
                         f"🎉 Siz {referrer.full_name} orqali ro'yxatdan o'tdingiz!\n\n"
@@ -175,6 +175,19 @@ async def start_command(message: Message, db_user: User, **kwargs):
     quiz_progress = db_user.daily_quiz_progress
     quiz_bar = _create_progress_bar(quiz_progress)
 
+    # Umumiy statistika
+    total_answered = db_user.total_questions
+    accuracy = round(db_user.total_correct / db_user.total_questions * 100, 1) if db_user.total_questions > 0 else 0
+
+    # SM-2 statistikasi
+    try:
+        from src.repositories.spaced_rep_repo import SpacedRepetitionRepository
+        async with get_session() as session:
+            sr_repo = SpacedRepetitionRepository(session)
+            sm2_stats = await sr_repo.get_user_stats(db_user.user_id)
+    except Exception:
+        sm2_stats = {"total": 0, "mastered": 0, "learning": 0, "due_today": 0, "accuracy": 0}
+
     # Maqsadga erishish xabari
     goal_message = ""
     if db_user.daily_goal_reached:
@@ -183,19 +196,31 @@ async def start_command(message: Message, db_user: User, **kwargs):
         remaining = db_user.daily_word_goal - db_user.words_learned_today
         goal_message = f"\n📝 Maqsadgacha: <b>{remaining}</b> ta so'z qoldi"
 
+    # Takrorlash kerakmi?
+    due_message = ""
+    if sm2_stats["due_today"] > 0:
+        due_message = f"\n🔄 <b>Bugun takrorlash:</b> {sm2_stats['due_today']} ta so'z"
+
     welcome_text = f"""
 👋 <b>Xush kelibsiz, {db_user.full_name}!</b>
 
-🔥 Streak: <b>{streak_count}</b> kun
-📊 Daraja: <b>{level_name or "Tanlanmagan"}</b> | {db_user.current_day_number}-kun
+🔥 Streak: <b>{streak_count}</b> kun | 📊 Daraja: <b>{level_name or "Tanlanmagan"}</b>
 
-<b>Bugungi progress:</b>
+<b>📈 Umumiy progress:</b>
+├ 📚 O'rganilgan so'zlar: <b>{db_user.total_words_learned}</b>
+├ 🎯 Jami quizlar: <b>{db_user.total_quizzes}</b>
+├ ✅ To'g'ri javoblar: <b>{db_user.total_correct}</b>/{total_answered}
+├ 🎯 Aniqlik: <b>{accuracy}%</b>
+├ ✅ O'zlashtirilgan: <b>{sm2_stats['mastered']}</b> ta
+└ 📝 O'rganilmoqda: <b>{sm2_stats['learning']}</b> ta
+
+<b>📅 Bugungi progress:</b>
 📝 So'zlar: {db_user.words_learned_today}/{db_user.daily_word_goal}
 {word_bar} {word_progress:.0f}%
 
 🎯 Quizlar: {db_user.quizzes_today}/{db_user.daily_quiz_goal}
 {quiz_bar} {quiz_progress:.0f}%
-{goal_message}
+{goal_message}{due_message}
 
 Davom etamizmi? 👇
 """
@@ -842,7 +867,7 @@ async def onboard_start_a1(callback: CallbackQuery, state: FSMContext):
                 days = await quiz_service.get_days(a1_level["id"])
 
                 # Set state for quiz flow
-                from src.handlers.quiz.simple import QuizStates
+                from src.handlers.quiz.personal import QuizStates
                 await state.set_state(QuizStates.selecting_day)
                 await state.update_data(language_id=german["id"], level_id=a1_level["id"])
 
@@ -928,7 +953,7 @@ async def onboard_select_level(callback: CallbackQuery, state: FSMContext):
                 days = await quiz_service.get_days(selected_level["id"])
 
                 # Set state for quiz flow
-                from src.handlers.quiz.simple import QuizStates
+                from src.handlers.quiz.personal import QuizStates
                 await state.set_state(QuizStates.selecting_day)
                 await state.update_data(language_id=german["id"], level_id=selected_level["id"])
 

@@ -38,7 +38,7 @@ class DuelRepository(BaseRepository):
             challenge_expires_at=datetime.utcnow() + timedelta(minutes=5)
         )
         self.session.add(duel)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(duel)
         return duel
     
@@ -100,7 +100,7 @@ class DuelRepository(BaseRepository):
             return None
 
         duel.accept(opponent_id)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(duel)
         return duel
     
@@ -111,7 +111,7 @@ class DuelRepository(BaseRepository):
             return None
         
         duel.decline()
-        await self.session.commit()
+        await self.session.flush()
         return duel
     
     async def update_challenger_result(
@@ -140,7 +140,7 @@ class DuelRepository(BaseRepository):
         if duel.opponent_completed:
             duel.complete()
 
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(duel)
         return duel
     
@@ -170,7 +170,7 @@ class DuelRepository(BaseRepository):
         if duel.challenger_completed:
             duel.complete()
 
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(duel)
         return duel
     
@@ -179,7 +179,7 @@ class DuelRepository(BaseRepository):
         duel = await self.get_by_id(duel_id)
         if duel:
             duel.question_ids = ",".join(map(str, question_ids))
-            await self.session.commit()
+            await self.session.flush()
     
     async def get_question_ids(self, duel_id: int) -> List[int]:
         """Duel savollarini olish"""
@@ -232,7 +232,7 @@ class DuelRepository(BaseRepository):
             )
             .values(status=DuelStatus.EXPIRED)
         )
-        await self.session.commit()
+        await self.session.flush()
         return result.rowcount
 
 
@@ -253,7 +253,7 @@ class DuelStatsRepository(BaseRepository):
         if not stats:
             stats = DuelStats(user_id=user_id)
             self.session.add(stats)
-            await self.session.commit()
+            await self.session.flush()
             await self.session.refresh(stats)
         
         return stats
@@ -275,7 +275,7 @@ class DuelStatsRepository(BaseRepository):
         else:
             stats.record_loss(stars_change)
         
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(stats)
         return stats
     

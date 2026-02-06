@@ -60,7 +60,7 @@ class InventoryRepository(BaseRepository[UserInventory]):
             expires_at=expires_at
         )
         self.session.add(inventory)
-        await self.session.commit()
+        await self.session.flush()
         return inventory
     
     async def get_user_items(
@@ -112,9 +112,9 @@ class InventoryRepository(BaseRepository[UserInventory]):
         
         item.quantity -= quantity
         if item.quantity <= 0:
-            await self.session.delete(item)
-        
-        await self.session.commit()
+            self.session.delete(item)  # delete() is sync, not async
+
+        await self.session.flush()
         return True
     
     async def activate_item(
@@ -145,5 +145,5 @@ class InventoryRepository(BaseRepository[UserInventory]):
         if duration_hours:
             item.expires_at = datetime.utcnow() + timedelta(hours=duration_hours)
         
-        await self.session.commit()
+        await self.session.flush()
         return item

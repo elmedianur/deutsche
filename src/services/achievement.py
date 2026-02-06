@@ -18,9 +18,11 @@ logger = get_logger(__name__)
 
 class AchievementRepository(BaseRepository[Achievement]):
     """Achievement repository"""
-    
+
+    model = Achievement
+
     def __init__(self, session: AsyncSession):
-        super().__init__(Achievement, session)
+        super().__init__(session)
     
     async def get_all_achievements(self) -> List[Achievement]:
         """Get all active achievements"""
@@ -293,7 +295,7 @@ class AchievementService(LoggerMixin):
         rewards = await self.get_rewards_for_achievement(achievement)
         
         if rewards["premium_days"] > 0:
-            from src.repositories.payment import SubscriptionRepository
+            from src.repositories.subscription_repo import SubscriptionRepository
             sub_repo = SubscriptionRepository(self.session)
             await sub_repo.extend_subscription(user_id, rewards["premium_days"])
         

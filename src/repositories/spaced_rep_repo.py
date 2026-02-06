@@ -48,7 +48,7 @@ class SpacedRepetitionRepository(BaseRepository[SpacedRepetition]):
         quality = 4 if is_correct else 1
         sr.update_after_review(quality)
         
-        await self.session.commit()
+        await self.session.flush()
         return sr
     
     async def get_due_questions(self, user_id: int, day_id: int, limit: int = 10) -> List[int]:

@@ -6,8 +6,8 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import User, UserStreak
-from src.repositories.user import UserRepository
-from src.repositories.payment import SubscriptionRepository
+from src.repositories import UserRepository
+from src.repositories.subscription_repo import SubscriptionRepository
 from src.core.logging import get_logger, LoggerMixin
 from src.core.exceptions import UserBlockedError, EntityNotFoundError
 
@@ -52,15 +52,15 @@ class UserService(LoggerMixin):
     
     async def _process_referral(self, user: User, referral_code: str) -> None:
         """Process referral for new user"""
-        from src.repositories.quiz import UserRepository
         from src.database.models import Referral, ReferralStatus
         from src.config import settings
-        
+        from sqlalchemy import update
+
         # Find referrer
         referrer = await self.user_repo.get_user_by_referral_code(referral_code)
         if not referrer or referrer.user_id == user.user_id:
             return
-        
+
         # Create referral record
         referral = Referral(
             referrer_id=referrer.user_id,
@@ -69,13 +69,17 @@ class UserService(LoggerMixin):
             required_quizzes=settings.REFERRAL_MIN_QUIZZES
         )
         self.session.add(referral)
-        
+
         # Update user's referred_by
         user.referred_by_id = referrer.user_id
-        
-        # Update referrer's count
-        referrer.referral_count += 1
-        
+
+        # Atomic SQL increment (race condition oldini olish)
+        await self.session.execute(
+            update(User)
+            .where(User.user_id == referrer.user_id)
+            .values(referral_count=User.referral_count + 1)
+        )
+
         await self.session.flush()
         
         self.logger.info(

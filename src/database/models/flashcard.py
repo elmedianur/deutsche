@@ -8,6 +8,7 @@ from sqlalchemy import String, Text, ForeignKey, Integer, BigInteger, DateTime, 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base, TimestampMixin, ActiveMixin
+from src.core.utils import utc_today
 
 
 class FlashcardDeck(Base, TimestampMixin, ActiveMixin):
@@ -150,7 +151,7 @@ class UserFlashcard(Base, TimestampMixin):
     repetitions: Mapped[int] = mapped_column(Integer, default=0)
     
     # Scheduling
-    next_review_date: Mapped[date] = mapped_column(Date, default=date.today)
+    next_review_date: Mapped[date] = mapped_column(Date, default=utc_today)
     last_review_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     
     # Stats
@@ -180,7 +181,7 @@ class UserFlashcard(Base, TimestampMixin):
         quality = 4 if knew_it else 1  # Simplified quality rating
         
         self.total_reviews += 1
-        self.last_review_date = date.today()
+        self.last_review_date = utc_today()
         
         result = {
             "knew_it": knew_it,
@@ -212,7 +213,7 @@ class UserFlashcard(Base, TimestampMixin):
         )
         
         # Set next review date
-        self.next_review_date = date.today() + timedelta(days=self.interval)
+        self.next_review_date = utc_today() + timedelta(days=self.interval)
         
         result["new_interval"] = self.interval
         result["next_review"] = self.next_review_date
@@ -222,12 +223,12 @@ class UserFlashcard(Base, TimestampMixin):
     @property
     def is_due(self) -> bool:
         """Check if card is due for review"""
-        return date.today() >= self.next_review_date and not self.is_suspended
+        return utc_today() >= self.next_review_date and not self.is_suspended
     
     @property
     def days_until_due(self) -> int:
         """Days until next review"""
-        return max(0, (self.next_review_date - date.today()).days)
+        return max(0, (self.next_review_date - utc_today()).days)
     
     @property
     def mastery_level(self) -> str:

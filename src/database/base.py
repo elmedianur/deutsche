@@ -2,10 +2,15 @@
 Database base model and mixins
 Async SQLAlchemy 2.0 style
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from sqlalchemy import DateTime, Integer, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, declared_attr
+
+
+def _utc_now() -> datetime:
+    """Timezone-aware UTC now."""
+    return datetime.now(timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -38,16 +43,16 @@ class TimestampMixin:
     
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=_utc_now,
         server_default=func.now(),
         nullable=False
     )
     
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=_utc_now,
         server_default=func.now(),
-        onupdate=datetime.utcnow,
+        onupdate=_utc_now,
         nullable=False
     )
 
@@ -69,7 +74,7 @@ class SoftDeleteMixin:
     def soft_delete(self) -> None:
         """Mark record as deleted"""
         self.is_deleted = True
-        self.deleted_at = datetime.utcnow()
+        self.deleted_at = _utc_now()
     
     def restore(self) -> None:
         """Restore soft-deleted record"""

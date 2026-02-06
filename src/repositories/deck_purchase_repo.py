@@ -41,7 +41,7 @@ class DeckPurchaseRepository(BaseRepository[UserDeckPurchase]):
             payment_id=payment_id
         )
         self.session.add(purchase)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(purchase)
         return purchase
     

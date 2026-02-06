@@ -39,7 +39,7 @@ class TournamentRepository(BaseRepository):
             **kwargs
         )
         self.session.add(tournament)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(tournament)
         return tournament
     
@@ -118,7 +118,7 @@ class TournamentRepository(BaseRepository):
         tournament = await self.get_by_id(tournament_id)
         if tournament:
             tournament.status = status
-            await self.session.commit()
+            await self.session.flush()
             await self.session.refresh(tournament)
         return tournament
     
@@ -127,7 +127,7 @@ class TournamentRepository(BaseRepository):
         tournament = await self.get_by_id(tournament_id)
         if tournament:
             tournament.winner_id = winner_id
-            await self.session.commit()
+            await self.session.flush()
     
     async def increment_participants(self, tournament_id: int) -> None:
         """Ishtirokchilar sonini oshirish"""
@@ -136,7 +136,7 @@ class TournamentRepository(BaseRepository):
             .where(Tournament.id == tournament_id)
             .values(participants_count=Tournament.participants_count + 1)
         )
-        await self.session.commit()
+        await self.session.flush()
 
 
 class TournamentParticipantRepository(BaseRepository):
@@ -158,7 +158,7 @@ class TournamentParticipantRepository(BaseRepository):
             registered_at=datetime.utcnow()
         )
         self.session.add(participant)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(participant)
         return participant
     
@@ -225,7 +225,7 @@ class TournamentParticipantRepository(BaseRepository):
         
         participant.last_played_at = datetime.utcnow()
         
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(participant)
         return participant
     
@@ -292,7 +292,7 @@ class TournamentParticipantRepository(BaseRepository):
         for rank, participant in enumerate(leaderboard, 1):
             participant.final_rank = rank
         
-        await self.session.commit()
+        await self.session.flush()
     
     async def mark_completed(
         self,
@@ -305,7 +305,7 @@ class TournamentParticipantRepository(BaseRepository):
         if participant:
             participant.is_completed = True
             participant.completed_at = datetime.utcnow()
-            await self.session.commit()
+            await self.session.flush()
             await self.session.refresh(participant)
         
         return participant
@@ -324,7 +324,7 @@ class TournamentParticipantRepository(BaseRepository):
             participant.prize_received = True
             participant.prize_stars = stars
             participant.prize_premium_days = premium_days
-            await self.session.commit()
+            await self.session.flush()
             await self.session.refresh(participant)
         
         return participant

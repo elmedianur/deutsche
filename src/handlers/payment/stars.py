@@ -150,8 +150,14 @@ async def confirm_purchase(callback: CallbackQuery, db_user: User, bot: Bot):
 @router.pre_checkout_query(F.invoice_payload.startswith("premium:"))
 async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
     """Handle pre-checkout query"""
+    logger.info(
+        f"PRE_CHECKOUT received: user={pre_checkout.from_user.id}, "
+        f"payload={pre_checkout.invoice_payload}, "
+        f"amount={pre_checkout.total_amount}"
+    )
     try:
-        await payment_service.process_pre_checkout(pre_checkout)
+        result = await payment_service.process_pre_checkout(pre_checkout)
+        logger.info(f"PRE_CHECKOUT result: {result}")
     except Exception as e:
         logger.error(f"Pre-checkout error: {e}", exc_info=True)
         try:

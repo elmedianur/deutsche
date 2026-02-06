@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from typing import Dict, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
+from src.core.utils import utc_today
 
 
 class Algorithm(str, Enum):
@@ -97,7 +98,7 @@ class SM2Algorithm:
             interval=new_interval,
             easiness=new_easiness,
             repetitions=new_repetitions,
-            next_review=date.today() + timedelta(days=new_interval),
+            next_review=utc_today() + timedelta(days=new_interval),
             is_graduated=new_repetitions >= 2,
             is_suspended=is_suspended
         )
@@ -217,7 +218,7 @@ class AnkiAlgorithm:
             interval=new_interval,
             easiness=new_easiness,
             repetitions=new_repetitions,
-            next_review=date.today() + timedelta(days=new_interval),
+            next_review=utc_today() + timedelta(days=new_interval),
             is_graduated=is_graduated,
             is_suspended=is_suspended
         )

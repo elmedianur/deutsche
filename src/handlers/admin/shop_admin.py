@@ -289,7 +289,7 @@ async def admin_add_deck_price(message: Message, state: FSMContext):
             display_order=0
         )
         session.add(deck)
-        await session.commit()
+        await session.flush()
         deck_id = deck.id
     
     await state.clear()
@@ -362,15 +362,21 @@ async def admin_edit_field_save(message: Message, state: FSMContext):
                 deck.description = value
             elif field == "price":
                 try:
-                    deck.price = int(value)
+                    new_price = int(value)
+                    if new_price < 0:
+                        await state.clear()
+                        await message.answer("❌ Narx manfiy bo'lishi mumkin emas!")
+                        return
+                    deck.price = new_price
                     deck.is_premium = deck.price > 0
                 except ValueError:
+                    await state.clear()
                     await message.answer("❌ Raqam kiriting!")
                     return
             elif field == "icon":
                 deck.icon = value[:10]
             
-            await session.commit()
+            await session.flush()
     
     await state.clear()
     
@@ -407,7 +413,7 @@ async def admin_toggle_deck(callback: CallbackQuery):
                 deck.is_premium = not deck.is_premium
                 msg = "⭐ Premium qilindi" if deck.is_premium else "🆓 Bepul qilindi"
             
-            await session.commit()
+            await session.flush()
     
     await callback.answer(msg, show_alert=True)
     
@@ -445,8 +451,8 @@ async def admin_delete_confirm(callback: CallbackQuery):
         )
         deck = result.scalar_one_or_none()
         if deck:
-            await session.delete(deck)
-            await session.commit()
+            session.delete(deck)
+            await session.flush()
     
     await callback.answer("🗑 O'chirildi!", show_alert=True)
     
@@ -548,7 +554,7 @@ async def admin_add_card_example(message: Message, state: FSMContext):
         if deck:
             deck.cards_count += 1
         
-        await session.commit()
+        await session.flush()
     
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -1016,7 +1022,7 @@ async def import_market_command(message: Message, state: FSMContext, bot: Bot):
                         session.add(day)
                         topics_created += 1
 
-            await session.commit()
+            await session.flush()
 
         os.remove(file_path)
         await state.update_data(pending_excel_file_id=None)
@@ -1476,7 +1482,7 @@ async def universal_import_command(message: Message, state: FSMContext, bot: Bot
                 all_cards = result.scalars().all()
                 deck.cards_count = len(all_cards)
 
-            await session.commit()
+            await session.flush()
 
         os.remove(file_path)
         await state.update_data(pending_excel_file_id=None)

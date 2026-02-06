@@ -74,7 +74,7 @@ async def get_or_create_learned_deck(session, user_id: int, level_id: int = None
             cards_count=0
         )
         session.add(deck)
-        await session.commit()
+        await session.flush()
         await session.refresh(deck)
 
     return deck
@@ -127,7 +127,7 @@ async def add_word_to_flashcard(
             times_known=1 if quality >= 4 else 0
         )
         session.add(card)
-        await session.commit()
+        await session.flush()
         await session.refresh(card)
 
         # Deck cards_count ni yangilash
@@ -137,7 +137,7 @@ async def add_word_to_flashcard(
         deck = deck_result.scalar_one_or_none()
         if deck:
             deck.cards_count += 1
-            await session.commit()
+            await session.flush()
 
         is_new = True
     else:
@@ -174,7 +174,7 @@ async def add_word_to_flashcard(
             is_learning=True
         )
         session.add(user_card)
-        await session.commit()
+        await session.flush()
 
     return is_new
 

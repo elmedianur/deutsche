@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -128,20 +129,19 @@ def study_keyboard(show_back: bool = False, card_index: int = 0, total: int = 0)
 # HANDLERS
 # ============================================================
 
-@router.callback_query(F.data == "flashcard:menu")
-async def flashcard_menu(callback: CallbackQuery, state: FSMContext):
-    """Flashcard asosiy menu"""
+@router.message(Command("flashcard"))
+async def flashcard_command(message: Message, state: FSMContext):
+    """/flashcard komandasi - Flashcard asosiy menuni ochish"""
     await state.clear()
-    
-    # Statistika olish
-    user_id = callback.from_user.id
+
+    user_id = message.from_user.id
     stats_text = ""
-    
+
     try:
         async with get_session() as session:
             user_fc_repo = UserFlashcardRepository(session)
             stats = await user_fc_repo.get_user_card_stats(user_id)
-            
+
             if stats["total_cards"] > 0:
                 stats_text = f"""
 📊 <b>Sizning progressingiz:</b>
@@ -152,7 +152,7 @@ async def flashcard_menu(callback: CallbackQuery, state: FSMContext):
 """
     except Exception as e:
         logger.error(f"Stats error: {e}")
-    
+
     text = f"""
 🃏 <b>Flashcards</b>
 
@@ -166,7 +166,49 @@ So'zlarni kartochkalar yordamida o'rganing!
 5. SM-2 algoritmi takrorlashni rejalashtiradi
 {stats_text}
 """
-    
+
+    await message.answer(text, reply_markup=flashcard_menu_keyboard())
+
+
+@router.callback_query(F.data == "flashcard:menu")
+async def flashcard_menu(callback: CallbackQuery, state: FSMContext):
+    """Flashcard asosiy menu"""
+    await state.clear()
+
+    # Statistika olish
+    user_id = callback.from_user.id
+    stats_text = ""
+
+    try:
+        async with get_session() as session:
+            user_fc_repo = UserFlashcardRepository(session)
+            stats = await user_fc_repo.get_user_card_stats(user_id)
+
+            if stats["total_cards"] > 0:
+                stats_text = f"""
+📊 <b>Sizning progressingiz:</b>
+- O'rganilgan: {stats['learned']} ta
+- O'rganilmoqda: {stats['learning']} ta
+- Bugun takrorlash: {stats['due_today']} ta
+- Aniqlik: {stats['accuracy']:.1f}%
+"""
+    except Exception as e:
+        logger.error(f"Stats error: {e}")
+
+    text = f"""
+🃏 <b>Flashcards</b>
+
+So'zlarni kartochkalar yordamida o'rganing!
+
+<b>Qanday ishlaydi:</b>
+1. Deck tanlang
+2. Kartochka ko'rsatiladi
+3. Javobni eslang va "Ko'rsat" bosing
+4. O'zingizni baholang (Bildim/Bilmadim)
+5. SM-2 algoritmi takrorlashni rejalashtiradi
+{stats_text}
+"""
+
     await callback.message.edit_text(text, reply_markup=flashcard_menu_keyboard())
     await callback.answer()
 
@@ -589,7 +631,7 @@ async def save_example(message, state: FSMContext):
             card = await card_repo.get_by_id(card_id)
             if card:
                 card.example_sentence = example_text
-                await session.commit()
+                await session.flush()
         
         # State'dagi cards ni yangilash
         cards = data.get("cards", [])
@@ -1001,7 +1043,11 @@ Quyidagi tugmalar orqali o'zgartiring:
 @router.callback_query(F.data.startswith("fc:set_new:"))
 async def set_new_cards_limit(callback: CallbackQuery, db_user: User):
     """Yangi kartochkalar limitini o'zgartirish"""
-    new_limit = int(callback.data.split(":")[2])
+    from src.core.utils import safe_parse_int
+    new_limit = safe_parse_int(callback.data, 2)
+    if new_limit is None:
+        await callback.answer("❌ Noto'g'ri format", show_alert=True)
+        return
     user_id = callback.from_user.id
     
     try:
@@ -1022,7 +1068,11 @@ async def set_new_cards_limit(callback: CallbackQuery, db_user: User):
 @router.callback_query(F.data.startswith("fc:set_review:"))
 async def set_review_limit(callback: CallbackQuery, db_user: User):
     """Takrorlash limitini o'zgartirish"""
-    new_limit = int(callback.data.split(":")[2])
+    from src.core.utils import safe_parse_int
+    new_limit = safe_parse_int(callback.data, 2)
+    if new_limit is None:
+        await callback.answer("❌ Noto'g'ri format", show_alert=True)
+        return
     user_id = callback.from_user.id
     
     try:
@@ -1897,7 +1947,7 @@ async def arxiv_unsuspend_all(callback: CallbackQuery, db_user: User):
                 )
                 .values(is_suspended=False)
             )
-            await session.commit()
+            await session.flush()
             count = result.rowcount
         
         text = f"""

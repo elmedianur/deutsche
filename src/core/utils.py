@@ -3,9 +3,46 @@ Core utilities - Secure random functions and helpers
 """
 import secrets
 import random as _random
+from datetime import datetime, date, timezone
 from typing import List, TypeVar, Sequence
 
+
+def utc_today() -> date:
+    """UTC timezone bo'yicha bugungi sanani qaytaradi.
+
+    Server timezone'dan qat'i nazar doim UTC vaqtini ishlatadi.
+    date.today() o'rniga hamma joyda shu funksiyani ishlating.
+    """
+    return datetime.now(timezone.utc).date()
+
 T = TypeVar('T')
+
+
+def utc_now() -> datetime:
+    """UTC timezone-aware hozirgi vaqtni qaytaradi."""
+    return datetime.now(timezone.utc)
+
+
+def safe_parse_int(data: str, index: int, delimiter: str = ":") -> int | None:
+    """Callback data dan xavfsiz int parse qilish.
+
+    IndexError va ValueError dan himoya qiladi.
+    None qaytarsa — callback.answer("Xatolik") qilish kerak.
+    Manfiy index ham qo'llab-quvvatlanadi (masalan -1 = oxirgi element).
+    """
+    parts = data.split(delimiter)
+    try:
+        return int(parts[index])
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def safe_parse_str(data: str, index: int, delimiter: str = ":") -> str | None:
+    """Callback data dan xavfsiz string parse qilish."""
+    parts = data.split(delimiter)
+    if index >= len(parts):
+        return None
+    return parts[index]
 
 
 def secure_shuffle(items: Sequence[T]) -> List[T]:

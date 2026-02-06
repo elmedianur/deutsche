@@ -145,7 +145,8 @@ async def achievements_menu(callback: CallbackQuery, db_user: User):
 @router.callback_query(F.data.startswith("achievements:page:"))
 async def achievements_page(callback: CallbackQuery, db_user: User):
     """Show achievements - specific page"""
-    page = int(callback.data.split(":")[2])
+    from src.core.utils import safe_parse_int
+    page = safe_parse_int(callback.data, 2) or 0
     await show_achievements_page(callback, db_user, page=page)
 
 
@@ -615,7 +616,11 @@ Yangi darajani tanlasangiz, o'rganish 1-kundan boshlanadi.
 @router.callback_query(F.data.startswith("settings:set_level:"))
 async def settings_set_level(callback: CallbackQuery, db_user: User):
     """Darajani o'rnatish"""
-    level_id = int(callback.data.split(":")[-1])
+    from src.core.utils import safe_parse_int
+    level_id = safe_parse_int(callback.data, -1, ":")
+    if level_id is None:
+        await callback.answer("❌ Xatolik", show_alert=True)
+        return
 
     async with get_session() as session:
         from src.repositories import UserRepository
@@ -675,7 +680,11 @@ Har kuni nechta so'z o'rganmoqchisiz?
 @router.callback_query(F.data.startswith("settings:set_word_goal:"))
 async def settings_set_word_goal(callback: CallbackQuery, db_user: User):
     """Kunlik so'z maqsadini o'rnatish"""
-    goal = int(callback.data.split(":")[-1])
+    from src.core.utils import safe_parse_int
+    goal = safe_parse_int(callback.data, -1, ":")
+    if goal is None:
+        await callback.answer("❌ Xatolik", show_alert=True)
+        return
 
     async with get_session() as session:
         from src.repositories import UserRepository
@@ -723,7 +732,11 @@ Har kuni nechta quiz yechmoqchisiz?
 @router.callback_query(F.data.startswith("settings:set_quiz_goal:"))
 async def settings_set_quiz_goal(callback: CallbackQuery, db_user: User):
     """Kunlik quiz maqsadini o'rnatish"""
-    goal = int(callback.data.split(":")[-1])
+    from src.core.utils import safe_parse_int
+    goal = safe_parse_int(callback.data, -1, ":")
+    if goal is None:
+        await callback.answer("❌ Xatolik", show_alert=True)
+        return
 
     async with get_session() as session:
         from src.repositories import UserRepository

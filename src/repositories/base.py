@@ -79,6 +79,24 @@ class BaseRepository(Generic[ModelType], LoggerMixin):
         """Get single record matching filters"""
         results = await self.get_by_filter(filters, limit=1)
         return results[0] if results else None
+
+    async def get_one(self, **kwargs) -> Optional[ModelType]:
+        """Get single record by keyword arguments"""
+        return await self.get_one_by_filter(kwargs)
+
+    async def update_by_filter(self, filters: dict, **data) -> int:
+        """Update records matching filters, returns count of updated rows"""
+        from sqlalchemy import update as sql_update
+
+        stmt = sql_update(self.model)
+        for key, value in filters.items():
+            if hasattr(self.model, key):
+                stmt = stmt.where(getattr(self.model, key) == value)
+
+        stmt = stmt.values(**data)
+        result = await self.session.execute(stmt)
+        await self.session.flush()
+        return result.rowcount
     
     async def create(self, **data) -> ModelType:
         """Create new record"""
@@ -107,8 +125,8 @@ class BaseRepository(Generic[ModelType], LoggerMixin):
         instance = await self.get_by_id(id)
         if instance is None:
             return False
-        
-        await self.session.delete(instance)
+
+        self.session.delete(instance)  # delete() is sync, not async
         await self.session.flush()
         return True
     

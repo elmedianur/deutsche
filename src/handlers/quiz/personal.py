@@ -20,7 +20,7 @@ from src.database.models.flashcard import Flashcard, UserFlashcard
 from src.services import quiz_service
 from src.repositories import QuestionRepository, ProgressRepository, StreakRepository, UserRepository
 from src.repositories.spaced_rep_repo import SpacedRepetitionRepository
-from src.handlers.quiz.simple import update_flashcard_from_quiz
+from src.services.sr_algorithm import SpacedRepetitionService, Quality
 from src.keyboards.inline import (
     language_keyboard,
     level_keyboard,
@@ -30,12 +30,80 @@ from src.keyboards.inline import (
     back_button,
 )
 from src.core.logging import get_logger
+from src.core.utils import utc_today
 from src.services.audio_service import AudioService
 from src.services.xp_service import XPService
 from src.config import settings
 
 logger = get_logger(__name__)
 router = Router(name="personal_quiz")
+
+
+# ============================================================
+# FLASHCARD INTEGRATION
+# ============================================================
+
+async def update_flashcard_from_quiz(
+    session,
+    user_id: int,
+    question_text: str,
+    is_correct: bool,
+    algorithm: str = None
+) -> bool:
+    """Quiz javobiga qarab UserFlashcard ni yangilash."""
+    from sqlalchemy import select, and_
+    from datetime import date, timedelta
+
+    if algorithm is None:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_user_id(user_id)
+        algorithm = user.sr_algorithm if user else "sm2"
+
+    result = await session.execute(
+        select(Flashcard).where(Flashcard.front_text == question_text)
+    )
+    card = result.scalar_one_or_none()
+    if not card:
+        return False
+
+    result = await session.execute(
+        select(UserFlashcard).where(
+            and_(
+                UserFlashcard.user_id == user_id,
+                UserFlashcard.card_id == card.id
+            )
+        )
+    )
+    user_card = result.scalar_one_or_none()
+    if not user_card:
+        return False
+
+    quality = Quality.GOOD if is_correct else Quality.AGAIN
+    result = SpacedRepetitionService.calculate_next_review(
+        algorithm=algorithm,
+        quality=quality,
+        current_interval=user_card.interval,
+        current_easiness=user_card.easiness_factor,
+        current_repetitions=user_card.repetitions,
+        is_learning=user_card.is_learning
+    )
+
+    user_card.interval = result.interval
+    user_card.easiness_factor = result.easiness
+    user_card.repetitions = result.repetitions
+    user_card.next_review_date = result.next_review
+    user_card.last_review_date = utc_today()
+    user_card.total_reviews += 1
+    user_card.is_learning = not result.is_graduated
+
+    if is_correct:
+        user_card.correct_reviews += 1
+
+    if result.is_suspended:
+        user_card.is_suspended = True
+
+    await session.flush()
+    return True
 
 
 # ============================================================
@@ -919,7 +987,7 @@ async def show_quiz_settings(callback: CallbackQuery, db_user: User):
     from datetime import date
     
     # Kunlik limitni tekshirish
-    today = date.today()
+    today = utc_today()
     if db_user.quiz_last_date != today:
         db_user.quizzes_today = 0
     
@@ -994,7 +1062,7 @@ async def set_quiz_time(callback: CallbackQuery, db_user: User):
         await session.execute(
             update(User).where(User.user_id == db_user.user_id).values(quiz_time_limit=time_limit)
         )
-        await session.commit()
+        await session.flush()
     
     db_user.quiz_time_limit = time_limit
     await callback.answer(f"✅ Vaqt limiti: {time_limit} soniya", show_alert=True)
@@ -1011,7 +1079,7 @@ async def set_quiz_daily(callback: CallbackQuery, db_user: User):
         await session.execute(
             update(User).where(User.user_id == db_user.user_id).values(quiz_daily_limit=daily_limit)
         )
-        await session.commit()
+        await session.flush()
     
     db_user.quiz_daily_limit = daily_limit
     limit_text = str(daily_limit) if daily_limit > 0 else "Cheksiz"
@@ -1029,7 +1097,7 @@ async def set_quiz_difficulty(callback: CallbackQuery, db_user: User):
         await session.execute(
             update(User).where(User.user_id == db_user.user_id).values(quiz_difficulty=difficulty)
         )
-        await session.commit()
+        await session.flush()
     
     db_user.quiz_difficulty = difficulty
     diff_names = {"easy": "Oson", "medium": "O'rta", "hard": "Qiyin", "mixed": "Aralash"}

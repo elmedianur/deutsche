@@ -136,8 +136,8 @@ class XPService:
                 user.xp += XP_REWARDS["level_up_bonus"]
                 logger.info(f"User {user_id} leveled up: {old_level} -> {new_level}")
             
-            await session.commit()
-            
+            await session.flush()
+
             return user.xp, user.level, level_up
     
     @staticmethod
